@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Control</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen flex flex-col">
+
+  <!-- Top bar -->
+  <header class="bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center justify-between sticky top-0 z-50">
+    <div class="flex items-center gap-3">
+      <span class="text-lg font-bold tracking-tight text-white">⚡ Claude Control</span>
+      <span id="claude-state-badge" class="px-2 py-0.5 rounded text-xs font-semibold bg-gray-700 text-gray-300">—</span>
+    </div>
+    <div class="flex items-center gap-4 text-sm text-gray-400">
+      <span id="token-summary" class="hidden sm:block"></span>
+      <span id="server-time" class="font-mono text-xs"></span>
+      <span id="ws-status" class="w-2 h-2 rounded-full bg-red-500 inline-block" title="WebSocket"></span>
+    </div>
+  </header>
+
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- Sidebar -->
+    <nav class="w-14 sm:w-44 bg-gray-900 border-r border-gray-800 flex flex-col py-4 gap-1 shrink-0">
+      <button class="nav-btn active" data-tab="dashboard">
+        <span class="icon">📊</span><span class="label">Dashboard</span>
+      </button>
+      <button class="nav-btn" data-tab="execute">
+        <span class="icon">▶</span><span class="label">Exécuter</span>
+      </button>
+      <button class="nav-btn" data-tab="tokens">
+        <span class="icon">🔢</span><span class="label">Tokens</span>
+      </button>
+      <button class="nav-btn" data-tab="memory">
+        <span class="icon">📝</span><span class="label">Mémoire</span>
+      </button>
+      <button class="nav-btn" data-tab="history">
+        <span class="icon">🕐</span><span class="label">Historique</span>
+      </button>
+      <button class="nav-btn" data-tab="optimize">
+        <span class="icon">⚙️</span><span class="label">Optimize</span>
+      </button>
+      <button class="nav-btn" data-tab="mobile">
+        <span class="icon">📱</span><span class="label">Mobile</span>
+      </button>
+      <button class="nav-btn" data-tab="logs">
+        <span class="icon">📋</span><span class="label">Logs</span>
+      </button>
+    </nav>
+
+    <!-- Main content -->
+    <main class="flex-1 overflow-y-auto p-4 sm:p-6">
+
+      <!-- ── DASHBOARD ── -->
+      <div id="tab-dashboard" class="tab-content">
+        <h2 class="section-title">Dashboard</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+
+          <!-- Claude state -->
+          <div class="card">
+            <div class="card-title">État de Claude</div>
+            <div id="d-claude-state" class="text-2xl font-bold mt-2">—</div>
+            <div id="d-processes" class="text-sm text-gray-400 mt-1"></div>
+            <div id="d-reset" class="text-sm text-amber-400 mt-1 hidden"></div>
+            <div class="flex gap-2 mt-4">
+              <button onclick="autonomousMode()" class="btn-primary text-sm">🤖 Mode autonome</button>
+              <button onclick="cancelRestart()" class="btn-ghost text-sm">❌ Annuler</button>
+            </div>
+          </div>
+
+          <!-- Executor -->
+          <div class="card">
+            <div class="card-title">Executor</div>
+            <div id="d-exec-mode" class="text-lg font-semibold mt-2">—</div>
+            <div id="d-exec-calls" class="text-sm text-gray-400 mt-1"></div>
+          </div>
+
+          <!-- Listener -->
+          <div class="card">
+            <div class="card-title">Listener ntfy</div>
+            <div id="d-listener-state" class="text-lg font-semibold mt-2">—</div>
+            <div class="text-xs text-gray-500 mt-1 break-all" id="d-listener-topic"></div>
+            <div class="flex gap-2 mt-4">
+              <button onclick="api('POST','/api/listener/start')" class="btn-primary text-sm">▶ Start</button>
+              <button onclick="api('POST','/api/listener/stop')" class="btn-ghost text-sm">■ Stop</button>
+            </div>
+          </div>
+
+          <!-- Token snapshot -->
+          <div class="card sm:col-span-2">
+            <div class="card-title">Dernière session Claude</div>
+            <div id="d-token-project" class="text-sm text-gray-400 mt-2"></div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
+              <div class="metric-box"><div id="d-cost" class="metric-val">—</div><div class="metric-label">Coût</div></div>
+              <div class="metric-box"><div id="d-input" class="metric-val">—</div><div class="metric-label">Input tok</div></div>
+              <div class="metric-box"><div id="d-output" class="metric-val">—</div><div class="metric-label">Output tok</div></div>
+              <div class="metric-box"><div id="d-model" class="metric-val text-xs">—</div><div class="metric-label">Modèle</div></div>
+            </div>
+            <div id="d-drift" class="mt-3 text-sm"></div>
+          </div>
+
+          <!-- Quick notify -->
+          <div class="card">
+            <div class="card-title">Notification rapide</div>
+            <input id="n-title" class="input mt-2" placeholder="Titre" value="Claude Control">
+            <textarea id="n-msg" class="input mt-2 h-16 resize-none" placeholder="Message"></textarea>
+            <button onclick="sendNotify()" class="btn-primary mt-3 w-full">📲 Envoyer</button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ── EXECUTE ── -->
+      <div id="tab-execute" class="tab-content hidden">
+        <h2 class="section-title">Exécuter Claude</h2>
+        <div class="card">
+          <div class="card-title mb-2">Prompt</div>
+          <textarea id="exec-prompt" class="input h-32 resize-y" placeholder="Tape ton prompt ici…"></textarea>
+          <div class="flex gap-2 mt-3">
+            <select id="exec-model" class="input w-auto">
+              <option value="">Modèle par défaut</option>
+              <option value="claude-sonnet-4-5">Sonnet</option>
+              <option value="claude-haiku-4-5">Haiku</option>
+            </select>
+            <button onclick="runClaude()" class="btn-primary">▶ Exécuter</button>
+          </div>
+          <div id="exec-spinner" class="hidden mt-3 text-amber-400 text-sm">⏳ En cours…</div>
+        </div>
+        <div class="card mt-4">
+          <div class="card-title mb-2">Résultat</div>
+          <pre id="exec-output" class="output-box min-h-32">—</pre>
+          <button onclick="document.getElementById('exec-output').textContent='—'" class="btn-ghost text-xs mt-2">Vider</button>
+        </div>
+      </div>
+
+      <!-- ── TOKENS ── -->
+      <div id="tab-tokens" class="tab-content hidden">
+        <h2 class="section-title">Tokens & Contexte</h2>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="card">
+            <div class="card-title mb-3">Snapshot en temps réel</div>
+            <button onclick="refreshTokens()" class="btn-primary mb-4">🔄 Actualiser</button>
+            <div id="token-full" class="space-y-2 text-sm"></div>
+            <div id="token-drift" class="mt-4 p-3 rounded-lg bg-gray-800"></div>
+          </div>
+          <div class="card">
+            <div class="card-title mb-2">Parser /cost ou /context</div>
+            <p class="text-xs text-gray-400 mb-2">Colle la sortie de <code>/cost</code> ou <code>/context</code> dans Claude</p>
+            <textarea id="parse-input" class="input h-32 resize-none font-mono text-sm" placeholder="Paste ici…"></textarea>
+            <button onclick="parseUsage()" class="btn-primary mt-3">🔍 Analyser</button>
+            <div id="parse-output" class="output-box mt-3 min-h-16 text-sm"></div>
+          </div>
+        </div>
+        <div class="card mt-4">
+          <div class="card-title mb-2">Historique des runs</div>
+          <div id="token-history" class="overflow-x-auto"></div>
+        </div>
+      </div>
+
+      <!-- ── MEMORY ── -->
+      <div id="tab-memory" class="tab-content hidden">
+        <h2 class="section-title">Fichiers mémoire</h2>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div class="space-y-2">
+            <button onclick="loadMemory('claude_md')" class="memory-btn active-mem" id="mem-btn-claude_md">📄 claude.md</button>
+            <button onclick="loadMemory('architecture')" class="memory-btn" id="mem-btn-architecture">🏗 architecture.md</button>
+            <button onclick="loadMemory('stack')" class="memory-btn" id="mem-btn-stack">🔧 stack.md</button>
+            <button onclick="loadMemory('bugs')" class="memory-btn" id="mem-btn-bugs">🐛 bugs.md</button>
+            <button onclick="loadMemory('habits')" class="memory-btn" id="mem-btn-habits">🔄 habits.md</button>
+            <div id="mem-meta" class="text-xs text-gray-500 mt-2 px-2"></div>
+          </div>
+          <div class="lg:col-span-2 card">
+            <div class="flex justify-between items-center mb-2">
+              <div class="card-title" id="mem-current-name">claude.md</div>
+              <button onclick="saveMemory()" class="btn-primary text-sm">💾 Sauvegarder</button>
+            </div>
+            <textarea id="mem-editor" class="input h-96 resize-y font-mono text-sm" placeholder="Chargement…"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── HISTORY ── -->
+      <div id="tab-history" class="tab-content hidden">
+        <h2 class="section-title">Pipeline historique</h2>
+        <div class="flex flex-wrap gap-2 mb-4">
+          <button onclick="historyAction('merge')" class="btn-secondary">1. Merge</button>
+          <button onclick="historyAction('clean')" class="btn-secondary">2. Clean</button>
+          <button onclick="historyAction('analyze')" class="btn-secondary">3. Analyze</button>
+          <button onclick="historyAction('memory')" class="btn-secondary">4. Générer mémoire</button>
+          <button onclick="historyAction('all')" class="btn-primary">⚡ Tout faire</button>
+        </div>
+        <div class="card">
+          <div class="card-title mb-2">Résultat</div>
+          <div id="history-spinner" class="hidden text-amber-400 text-sm mb-2">⏳ En cours…</div>
+          <pre id="history-output" class="output-box min-h-64 text-xs">—</pre>
+        </div>
+      </div>
+
+      <!-- ── OPTIMIZE ── -->
+      <div id="tab-optimize" class="tab-content hidden">
+        <h2 class="section-title">Optimization Advisor</h2>
+        <button onclick="runOptimizer()" class="btn-primary mb-4">⚙️ Analyser</button>
+        <div id="optimize-spinner" class="hidden text-amber-400 text-sm mb-2">⏳ Analyse en cours…</div>
+        <div id="optimize-output" class="grid grid-cols-1 lg:grid-cols-2 gap-4"></div>
+      </div>
+
+      <!-- ── MOBILE ── -->
+      <div id="tab-mobile" class="tab-content hidden">
+        <h2 class="section-title">Contrôle mobile (ntfy)</h2>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="space-y-4">
+            <div class="card">
+              <div class="card-title mb-2">Envoyer une notification</div>
+              <input id="mob-title" class="input" placeholder="Titre" value="Claude Control">
+              <textarea id="mob-msg" class="input mt-2 h-16 resize-none" placeholder="Message"></textarea>
+              <select id="mob-priority" class="input mt-2 w-auto">
+                <option value="3">Priorité normale</option>
+                <option value="5">Urgente</option>
+                <option value="1">Basse</option>
+              </select>
+              <button onclick="sendNotifyMobile()" class="btn-primary mt-3 w-full">📲 Envoyer</button>
+            </div>
+            <div class="card">
+              <div class="card-title mb-2">Simuler commande ntfy</div>
+              <p class="text-xs text-gray-400 mb-2">status · run &lt;texte&gt; · go [prompt] · cancel · watcher · login</p>
+              <input id="sim-cmd" class="input" placeholder="status" value="status">
+              <button onclick="simulateCmd()" class="btn-secondary mt-2 w-full">⚡ Exécuter</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title mb-2">Historique des commandes reçues</div>
+            <div id="cmd-history" class="space-y-1 max-h-96 overflow-y-auto text-sm font-mono"></div>
+            <button onclick="refreshCommands()" class="btn-ghost text-xs mt-3">🔄 Rafraîchir</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── LOGS ── -->
+      <div id="tab-logs" class="tab-content hidden">
+        <h2 class="section-title">Logs temps réel</h2>
+        <div class="flex gap-2 mb-3">
+          <button onclick="clearLogs()" class="btn-ghost text-sm">🗑 Vider</button>
+          <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+            <input type="checkbox" id="log-autoscroll" checked class="accent-violet-500"> Auto-scroll
+          </label>
+        </div>
+        <div id="log-box" class="output-box h-[60vh] overflow-y-auto text-xs font-mono leading-5"></div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

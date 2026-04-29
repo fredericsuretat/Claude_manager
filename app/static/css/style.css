@@ -1,0 +1,93 @@
+/* Nav buttons */
+.nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin: 0 8px;
+  font-size: 0.875rem;
+  color: #9ca3af;
+  transition: background 0.15s, color 0.15s;
+  cursor: pointer;
+  width: calc(100% - 16px);
+  text-align: left;
+  background: transparent;
+  border: none;
+}
+.nav-btn .icon { font-size: 1.1rem; flex-shrink: 0; }
+.nav-btn .label { display: none; white-space: nowrap; }
+@media (min-width: 640px) { .nav-btn .label { display: block; } }
+.nav-btn:hover { background: #1f2937; color: #f3f4f6; }
+.nav-btn.active { background: #312e81; color: #c7d2fe; }
+
+/* Cards */
+.card {
+  background: #111827;
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  padding: 16px;
+}
+.card-title { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; }
+
+/* Section title */
+.section-title { font-size: 1.25rem; font-weight: 700; color: #f9fafb; margin-bottom: 1rem; }
+
+/* Buttons */
+.btn-primary {
+  background: #4f46e5; color: white; border-radius: 8px; padding: 8px 14px;
+  font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none; transition: background 0.15s;
+}
+.btn-primary:hover { background: #4338ca; }
+.btn-secondary {
+  background: #1f2937; color: #d1d5db; border-radius: 8px; padding: 8px 14px;
+  font-size: 0.875rem; font-weight: 500; cursor: pointer; border: 1px solid #374151; transition: background 0.15s;
+}
+.btn-secondary:hover { background: #374151; }
+.btn-ghost {
+  background: transparent; color: #6b7280; border-radius: 8px; padding: 6px 12px;
+  font-size: 0.875rem; cursor: pointer; border: 1px solid #374151; transition: all 0.15s;
+}
+.btn-ghost:hover { background: #1f2937; color: #9ca3af; }
+
+/* Inputs */
+.input {
+  width: 100%; background: #0f172a; border: 1px solid #374151; color: #f1f5f9;
+  border-radius: 8px; padding: 8px 12px; font-size: 0.875rem; outline: none;
+  transition: border-color 0.15s;
+}
+.input:focus { border-color: #4f46e5; }
+
+/* Output box */
+.output-box {
+  background: #0f172a; border: 1px solid #1e293b; border-radius: 8px;
+  padding: 12px; color: #a5f3fc; font-family: 'Courier New', monospace;
+  font-size: 0.8rem; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+}
+
+/* Metric boxes */
+.metric-box { background: #0f172a; border-radius: 8px; padding: 10px; text-align: center; }
+.metric-val { font-size: 1.1rem; font-weight: 700; color: #c7d2fe; }
+.metric-label { font-size: 0.65rem; color: #6b7280; margin-top: 2px; text-transform: uppercase; }
+
+/* Memory buttons */
+.memory-btn {
+  display: block; width: 100%; text-align: left; background: #111827; border: 1px solid #1f2937;
+  color: #9ca3af; border-radius: 8px; padding: 8px 12px; font-size: 0.875rem; cursor: pointer;
+  transition: all 0.15s;
+}
+.memory-btn:hover { background: #1f2937; color: #f3f4f6; }
+.memory-btn.active-mem { border-color: #4f46e5; color: #c7d2fe; background: #1e1b4b; }
+
+/* Log line colors */
+.log-error { color: #f87171; }
+.log-warn  { color: #fbbf24; }
+.log-ok    { color: #34d399; }
+.log-info  { color: #93c5fd; }
+.log-dim   { color: #6b7280; }
+
+/* State badges */
+.state-running      { background: #14532d; color: #86efac; }
+.state-idle         { background: #1c1917; color: #a8a29e; }
+.state-rate_limited { background: #7f1d1d; color: #fca5a5; }
+.state-unknown      { background: #1f2937; color: #9ca3af; }

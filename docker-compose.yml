@@ -1,0 +1,16 @@
+services:
+  claude-control:
+    build: .
+    container_name: claude-control-web
+    ports:
+      - "8765:8765"
+    volumes:
+      # Accès aux données Claude (historique, settings, mémoire)
+      - ~/.claude:/root/.claude
+      - ~/.claude.json:/root/.claude.json
+      # Hot-reload du code
+      - ./app:/app/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    network_mode: host   # Accès au réseau local pour pgrep + ntfy
