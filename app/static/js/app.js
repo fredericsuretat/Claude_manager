@@ -425,10 +425,17 @@ function termInit() {
   const ro = new ResizeObserver(() => { if (fitAddon) fitAddon.fit(); });
   ro.observe(document.getElementById('terminal-container'));
 
-  term.writeln('\x1b[90m[Terminal prêt — cliquez sur ▶ Démarrer pour lancer Claude]\x1b[0m');
-
-  // Sync current state
-  api('GET', '/api/terminal/status').then(s => termUpdateState(s.state, null)).catch(() => {});
+  // Sync current state and show appropriate message
+  api('GET', '/api/terminal/status').then(s => {
+    termUpdateState(s.state, null);
+    if (s.alive) {
+      term.writeln(`\x1b[32m[Session déjà active — PID ${s.pid} — en attente de sortie…]\x1b[0m`);
+    } else {
+      term.writeln('\x1b[90m[Terminal prêt — cliquez sur ▶ Démarrer pour lancer Claude]\x1b[0m');
+    }
+  }).catch(() => {
+    term.writeln('\x1b[90m[Terminal prêt — cliquez sur ▶ Démarrer pour lancer Claude]\x1b[0m');
+  });
 }
 
 function termUpdateState(state, reset_at) {
@@ -455,8 +462,15 @@ function termUpdateState(state, reset_at) {
 async function termStart() {
   const autonomous = document.getElementById('term-autonomous')?.checked || false;
   try {
+    // Stop existing session first if alive
+    const status = await api('GET', '/api/terminal/status');
+    if (status.alive) {
+      await api('POST', '/api/terminal/stop');
+      if (term) term.write('\r\n\x1b[90m[Session précédente arrêtée]\x1b[0m\r\n');
+      await new Promise(r => setTimeout(r, 500));
+    }
     const r = await api('POST', '/api/terminal/start', { autonomous });
-    if (r.error && term) term.write(`\r\n\x1b[33m[${r.error}]\x1b[0m\r\n`);
+    if (!r.ok && r.error && term) term.write(`\r\n\x1b[33m[${r.error}]\x1b[0m\r\n`);
   } catch (e) {
     if (term) term.write(`\r\n\x1b[31m[Erreur démarrage: ${e.message}]\x1b[0m\r\n`);
   }
