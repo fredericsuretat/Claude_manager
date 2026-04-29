@@ -132,16 +132,22 @@ class WatcherService:
         if reset_dt:
             reset_str = reset_dt.strftime("%d/%m à %Hh%M")
             self.mobile.notify(
-                "🚫 Quota Claude atteint",
-                f"Limite atteinte. Reset le {reset_str}.\nRelance auto programmée."
+                "Quota Claude atteint",
+                f"Limite atteinte. Reset le {reset_str}.\nRelance auto + notification programmees."
             )
             self.log(f"[WATCHER] Rate limit — reset prévu : {reset_str}")
             self._schedule_restart(reset_dt)
         else:
             self.mobile.notify(
-                "🚫 Quota Claude atteint",
-                "Limite atteinte. Heure de reset non parsée — relance manuelle requise."
+                "Quota Claude atteint",
+                "Limite atteinte. Heure de reset non parsee — relance manuelle requise."
             )
+
+        # Notify usage service so it schedules the reset notification independently
+        claude_usage = getattr(self, "claude_usage", None)
+        if claude_usage:
+            claude_usage.on_rate_limited(reset_dt)
+
         if self.on_state_change:
             self.on_state_change(self.state)
 

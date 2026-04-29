@@ -37,6 +37,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     if (btn.dataset.tab === 'tokens') refreshTokens();
     if (btn.dataset.tab === 'memory') loadMemory(currentMemKey);
     if (btn.dataset.tab === 'mobile') refreshCommands();
+    if (btn.dataset.tab === 'usage') refreshUsage();
   });
 });
 
@@ -91,6 +92,122 @@ function applyStatus(data) {
     dList.textContent = li.running ? '🟢 Actif' : '🔴 Arrêté';
     const topicEl = document.getElementById('d-listener-topic');
     if (topicEl) topicEl.textContent = li.topic || '';
+  }
+
+  // Claude usage mini-dashboard card
+  const cu = data.claude_usage || {};
+  setEl('d-plan-type', (cu.subscription || '—').toUpperCase());
+  setEl('d-plan-tier', cu.rate_limit_tier || '');
+  setEl('d-today-msgs', fmtNum((cu.today || {}).messageCount));
+  setEl('d-today-sessions', fmtNum((cu.today || {}).sessionCount));
+  const usageStatusEl = document.getElementById('d-usage-status');
+  if (usageStatusEl) {
+    if (cu.rate_limited) {
+      usageStatusEl.innerHTML = `<span class="text-red-400">Quota atteint</span>${cu.reset_at ? ` · Reset ${cu.reset_at}` : ''}${cu.remaining ? ` · dans ${cu.remaining}` : ''}`;
+    } else {
+      usageStatusEl.textContent = 'Quota disponible';
+    }
+  }
+}
+
+// ── Usage ─────────────────────────────────────────────────────────
+async function refreshUsage() {
+  try {
+    const data = await api('GET', '/api/claude-usage');
+    renderUsage(data);
+  } catch (e) {
+    console.error('Usage refresh error:', e);
+  }
+}
+
+function renderUsage(data) {
+  const plan = data.plan || {};
+  const today = data.today || {};
+  const recent = data.recent || {};
+
+  // Plan section
+  setEl('u-plan-type', (plan.subscription_type || '—').toUpperCase());
+  setEl('u-plan-tier', plan.rate_limit_tier || '');
+  const detailsEl = document.getElementById('u-plan-details');
+  if (detailsEl) {
+    const rows = [
+      ['Email', plan.email],
+      ['Nom', plan.display_name],
+      ['Rôle', plan.org_role],
+      ['Token OAuth valide', plan.oauth_valid ? '✅ Oui' : '⚠️ Expiré'],
+      ['Expiry OAuth', plan.oauth_expires],
+      ['Extra usage', plan.has_extra_usage ? '✅ Activé' : '🔒 Désactivé'],
+      ['Source données', plan.api_cost],
+    ];
+    detailsEl.innerHTML = rows.filter(([,v]) => v != null).map(([k, v]) =>
+      `<div class="flex justify-between border-b border-gray-800 py-1 text-xs">
+        <span class="text-gray-500">${k}</span>
+        <span class="text-gray-300">${v}</span>
+       </div>`
+    ).join('');
+  }
+
+  // Today
+  setEl('u-today-msgs', fmtNum(today.messageCount));
+  setEl('u-today-sessions', fmtNum(today.sessionCount));
+  setEl('u-today-tools', fmtNum(today.toolCallCount));
+
+  // Quota status
+  const stateEl = document.getElementById('u-quota-state');
+  const resetEl = document.getElementById('u-quota-reset');
+  const remainEl = document.getElementById('u-quota-remaining');
+  if (stateEl) {
+    if (data.rate_limited) {
+      stateEl.innerHTML = '<span class="text-red-400">🚫 Quota atteint</span>';
+      if (resetEl) resetEl.textContent = data.reset_at ? `Reset : ${data.reset_at}` : '';
+      if (remainEl) remainEl.textContent = data.remaining_until_reset ? `Reste : ${data.remaining_until_reset}` : '';
+    } else {
+      stateEl.innerHTML = '<span class="text-green-400">✅ Disponible</span>';
+      if (resetEl) resetEl.textContent = '';
+      if (remainEl) remainEl.textContent = data.reset_at ? `Prochain reset : ${data.reset_at}` : '';
+    }
+  }
+  const extraEl = document.getElementById('u-extra-usage');
+  if (extraEl) {
+    extraEl.textContent = plan.has_extra_usage
+      ? 'Extra usage activé (tokens supplémentaires payants disponibles)'
+      : 'Extra usage désactivé — uniquement le forfait standard';
+  }
+
+  // Activity chart (7 days)
+  const chartEl = document.getElementById('u-activity-chart');
+  const days = (recent.days || []).slice().reverse().slice(0, 7).reverse();
+  if (chartEl && days.length) {
+    const maxMsgs = Math.max(...days.map(d => d.messageCount || 0), 1);
+    chartEl.innerHTML = days.map(d => {
+      const pct = Math.round(((d.messageCount || 0) / maxMsgs) * 100);
+      const isToday = d.date === new Date().toISOString().slice(0, 10);
+      return `<div class="flex items-center gap-3 text-sm">
+        <span class="text-gray-500 font-mono text-xs w-24 shrink-0">${d.date}${isToday ? ' <span class="text-violet-400">auj.</span>' : ''}</span>
+        <div class="flex-1 bg-gray-800 rounded-full h-3 overflow-hidden">
+          <div class="h-full rounded-full ${isToday ? 'bg-violet-500' : 'bg-blue-600'}" style="width:${pct}%"></div>
+        </div>
+        <span class="text-gray-300 w-20 text-right text-xs">${fmtNum(d.messageCount)} msg · ${d.sessionCount || 0} sess</span>
+      </div>`;
+    }).join('');
+  }
+
+  // 30-day table
+  const tableEl = document.getElementById('u-activity-table');
+  const allDays = (recent.days || []).slice().reverse();
+  if (tableEl && allDays.length) {
+    tableEl.innerHTML = `<table class="w-full text-xs text-left">
+      <thead><tr class="text-gray-500 border-b border-gray-800">
+        <th class="py-1 pr-4">Date</th><th class="pr-4">Messages</th><th class="pr-4">Sessions</th><th>Tool calls</th>
+      </tr></thead>
+      <tbody>${allDays.map(d => `
+        <tr class="border-b border-gray-900 text-gray-300">
+          <td class="py-1 pr-4 font-mono">${d.date}</td>
+          <td class="pr-4">${fmtNum(d.messageCount)}</td>
+          <td class="pr-4">${d.sessionCount || 0}</td>
+          <td>${fmtNum(d.toolCallCount)}</td>
+        </tr>`).join('')}
+      </tbody></table>`;
   }
 }
 
@@ -356,11 +473,23 @@ function fmtNum(n) {
   return String(n);
 }
 
+// ── Tab helper (programmatic switch) ─────────────────────────────
+function switchTab(name) {
+  const btn = document.querySelector(`.nav-btn[data-tab="${name}"]`);
+  if (btn) btn.click();
+}
+
 // ── Init ──────────────────────────────────────────────────────────
 connectWs();
 
 // Auto-refresh tokens every 30s
 setInterval(refreshTokens, 30000);
+// Auto-refresh usage every 60s
+setInterval(() => {
+  if (!document.getElementById('tab-usage').classList.contains('hidden')) {
+    refreshUsage();
+  }
+}, 60000);
 // Auto-refresh commands every 10s when on mobile tab
 setInterval(() => {
   if (!document.getElementById('tab-mobile').classList.contains('hidden')) {

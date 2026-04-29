@@ -20,6 +20,7 @@ from app.services.mobile_listener_service import MobileListenerService
 from app.services.token_monitor_service import TokenMonitorService
 from app.services.usage_parse_service import UsageParseService
 from app.services.watcher_service import WatcherService
+from app.services.claude_usage_service import ClaudeUsageService
 
 # ── Init ────────────────────────────────────────────────────────
 ensure_dirs()
@@ -48,10 +49,12 @@ listener_svc = MobileListenerService(
 )
 token_svc = TokenMonitorService(logger=sync_logger)
 usage_svc = UsageParseService()
+claude_usage_svc = ClaudeUsageService(mobile_service=mobile_svc, logger=sync_logger)
 
 # Cross-inject
 executor_svc.watcher = watcher_svc
 listener_svc.watcher = watcher_svc
+watcher_svc.claude_usage = claude_usage_svc  # watcher notifie usage service lors d'un rate limit
 
 
 def on_command(msg: str):
@@ -119,10 +122,19 @@ async def _status_broadcaster():
 
 
 def _get_status() -> dict:
+    usage = claude_usage_svc.get_status()
     return {
         "watcher": watcher_svc.get_status(),
         "executor": executor_svc.get_status(),
         "listener": {"running": listener_svc.running, "topic": listener_svc.topic},
+        "claude_usage": {
+            "subscription": usage["plan"].get("subscription_type"),
+            "rate_limit_tier": usage["plan"].get("rate_limit_tier"),
+            "rate_limited": usage["rate_limited"],
+            "reset_at": usage["reset_at"],
+            "remaining": usage["remaining_until_reset"],
+            "today": usage["today"],
+        },
         "server_time": datetime.now().strftime("%H:%M:%S"),
     }
 
@@ -143,6 +155,22 @@ async def ws_endpoint(ws: WebSocket):
 @app.get("/api/status")
 def get_status():
     return _get_status()
+
+
+# ── REST: Claude Usage ───────────────────────────────────────────
+@app.get("/api/claude-usage")
+def get_claude_usage():
+    return claude_usage_svc.get_status()
+
+
+@app.get("/api/claude-usage/plan")
+def get_plan():
+    return claude_usage_svc.get_plan_info()
+
+
+@app.get("/api/claude-usage/stats")
+def get_stats():
+    return claude_usage_svc.get_recent_stats()
 
 
 # ── REST: Watcher ────────────────────────────────────────────────

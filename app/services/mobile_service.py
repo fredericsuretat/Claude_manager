@@ -12,7 +12,8 @@ class MobileService:
 
     @staticmethod
     def _header_safe(text: str) -> str:
-        return text.encode("latin-1", errors="ignore").decode("latin-1")
+        cleaned = text.encode("latin-1", errors="ignore").decode("latin-1")
+        return " ".join(cleaned.split())  # collapse whitespace + strip
 
     def notify(self, title: str, message: str, priority: int = 3):
         try:

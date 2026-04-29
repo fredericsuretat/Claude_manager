@@ -44,6 +44,9 @@
       <button class="nav-btn" data-tab="optimize">
         <span class="icon">⚙️</span><span class="label">Optimize</span>
       </button>
+      <button class="nav-btn" data-tab="usage">
+        <span class="icon">📈</span><span class="label">Usage</span>
+      </button>
       <button class="nav-btn" data-tab="mobile">
         <span class="icon">📱</span><span class="label">Mobile</span>
       </button>
@@ -101,6 +104,34 @@
               <div class="metric-box"><div id="d-model" class="metric-val text-xs">—</div><div class="metric-label">Modèle</div></div>
             </div>
             <div id="d-drift" class="mt-3 text-sm"></div>
+          </div>
+
+          <!-- Claude.ai Usage -->
+          <div class="card sm:col-span-2 lg:col-span-3">
+            <div class="flex items-center justify-between mb-3">
+              <div class="card-title">Abonnement Claude.ai</div>
+              <span class="text-xs text-green-500 font-mono">✓ 0 token API · lecture locale uniquement</span>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div class="metric-box">
+                <div id="d-plan-type" class="metric-val text-sm">—</div>
+                <div class="metric-label">Plan</div>
+              </div>
+              <div class="metric-box">
+                <div id="d-plan-tier" class="metric-val text-xs">—</div>
+                <div class="metric-label">Tier</div>
+              </div>
+              <div class="metric-box">
+                <div id="d-today-msgs" class="metric-val">—</div>
+                <div class="metric-label">Messages aujourd'hui</div>
+              </div>
+              <div class="metric-box">
+                <div id="d-today-sessions" class="metric-val">—</div>
+                <div class="metric-label">Sessions aujourd'hui</div>
+              </div>
+            </div>
+            <div id="d-usage-status" class="mt-3 text-sm text-gray-400"></div>
+            <button onclick="switchTab('usage')" class="btn-ghost text-xs mt-2">📈 Voir l'usage complet</button>
           </div>
 
           <!-- Quick notify -->
@@ -180,6 +211,58 @@
             </div>
             <textarea id="mem-editor" class="input h-96 resize-y font-mono text-sm" placeholder="Chargement…"></textarea>
           </div>
+        </div>
+      </div>
+
+      <!-- ── USAGE ── -->
+      <div id="tab-usage" class="tab-content hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="section-title mb-0">Usage Claude.ai</h2>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-green-500 bg-green-950 px-2 py-1 rounded font-mono">✓ 0 token API consommé · lecture locale uniquement</span>
+            <button onclick="refreshUsage()" class="btn-primary text-sm">🔄 Actualiser</button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+          <!-- Plan info -->
+          <div class="card">
+            <div class="card-title mb-3">Abonnement</div>
+            <div id="u-plan-type" class="text-2xl font-bold text-violet-400 mb-1">—</div>
+            <div id="u-plan-tier" class="text-sm text-gray-400 mb-3"></div>
+            <div class="space-y-1 text-sm" id="u-plan-details"></div>
+          </div>
+
+          <!-- Today stats -->
+          <div class="card">
+            <div class="card-title mb-3">Aujourd'hui</div>
+            <div class="grid grid-cols-3 gap-2">
+              <div class="metric-box"><div id="u-today-msgs" class="metric-val">—</div><div class="metric-label">Messages</div></div>
+              <div class="metric-box"><div id="u-today-sessions" class="metric-val">—</div><div class="metric-label">Sessions</div></div>
+              <div class="metric-box"><div id="u-today-tools" class="metric-val">—</div><div class="metric-label">Tool calls</div></div>
+            </div>
+          </div>
+
+          <!-- Rate limit status -->
+          <div class="card">
+            <div class="card-title mb-3">État quota</div>
+            <div id="u-quota-state" class="text-lg font-semibold">—</div>
+            <div id="u-quota-reset" class="text-sm text-amber-400 mt-1"></div>
+            <div id="u-quota-remaining" class="text-sm text-gray-400 mt-1"></div>
+            <div class="mt-3 text-xs text-gray-500" id="u-extra-usage"></div>
+          </div>
+        </div>
+
+        <!-- 7-day activity chart -->
+        <div class="card mb-4">
+          <div class="card-title mb-3">Activité — 7 derniers jours</div>
+          <div id="u-activity-chart" class="space-y-2"></div>
+        </div>
+
+        <!-- 30-day table -->
+        <div class="card">
+          <div class="card-title mb-2">Historique détaillé (30 jours)</div>
+          <div id="u-activity-table" class="overflow-x-auto"></div>
         </div>
       </div>
 
