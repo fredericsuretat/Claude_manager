@@ -54,7 +54,7 @@ class ExecutorService:
         lower = text.lower()
         return any(p in lower for p in patterns)
 
-    def run_claude(self, prompt: str, model: str = None):
+    def run_claude(self, prompt: str, model: str = None, skip_permissions: bool = False):
         if not self.enable_execution:
             self.log("[DRY_RUN] Claude blocked")
             return None
@@ -71,6 +71,8 @@ class ExecutorService:
 
         self.last_call_ts = now
         cmd = ["claude"]
+        if skip_permissions:
+            cmd.append("--dangerously-skip-permissions")
         if model:
             cmd += ["--model", model]
         cmd.append(prompt)
@@ -105,9 +107,9 @@ class ExecutorService:
             self.log(f"[Executor error] {e}")
             return None
 
-    def run_async(self, prompt: str, model: str = None, callback=None):
+    def run_async(self, prompt: str, model: str = None, skip_permissions: bool = False, callback=None):
         def _run():
-            result = self.run_claude(prompt, model)
+            result = self.run_claude(prompt, model, skip_permissions)
             if callback:
                 callback(result)
         thread = threading.Thread(target=_run, daemon=True)

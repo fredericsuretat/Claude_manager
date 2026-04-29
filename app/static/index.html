@@ -184,12 +184,15 @@
         <div class="card">
           <div class="card-title mb-2">Prompt</div>
           <textarea id="exec-prompt" class="input h-32 resize-y" placeholder="Tape ton prompt ici…"></textarea>
-          <div class="flex gap-2 mt-3">
+          <div class="flex flex-wrap items-center gap-3 mt-3">
             <select id="exec-model" class="input w-auto">
               <option value="">Modèle par défaut</option>
               <option value="claude-sonnet-4-5">Sonnet</option>
               <option value="claude-haiku-4-5">Haiku</option>
             </select>
+            <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none" title="Passe --dangerously-skip-permissions à Claude (nécessaire pour les outils MCP)">
+              <input type="checkbox" id="exec-skip-perms" class="accent-violet-500"> Bypass permissions
+            </label>
             <button onclick="runClaude()" class="btn-primary">▶ Exécuter</button>
           </div>
           <div id="exec-spinner" class="hidden mt-3 text-amber-400 text-sm">⏳ En cours…</div>

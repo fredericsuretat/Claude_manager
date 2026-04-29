@@ -311,10 +311,11 @@ async function runClaude() {
   const prompt = document.getElementById('exec-prompt').value.trim();
   if (!prompt) return;
   const model = document.getElementById('exec-model').value || null;
+  const skip_permissions = document.getElementById('exec-skip-perms')?.checked || false;
   document.getElementById('exec-spinner').classList.remove('hidden');
   document.getElementById('exec-output').textContent = '⏳ Exécution…';
   try {
-    const result = await api('POST', '/api/run', { prompt, model });
+    const result = await api('POST', '/api/run', { prompt, model, skip_permissions });
     document.getElementById('exec-output').textContent = result.output || '(pas de sortie)';
   } catch (e) {
     document.getElementById('exec-output').textContent = `Erreur: ${e.message}`;

@@ -238,11 +238,12 @@ def cancel_restart():
 class RunRequest(BaseModel):
     prompt: str
     model: Optional[str] = None
+    skip_permissions: bool = False
 
 
 @app.post("/api/run")
 def run_claude(req: RunRequest):
-    result = executor_svc.run_claude(req.prompt, req.model)
+    result = executor_svc.run_claude(req.prompt, req.model, req.skip_permissions)
     return {"output": result or "", "ok": result is not None}
 
 
