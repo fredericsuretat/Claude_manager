@@ -47,6 +47,8 @@ ANALYTICS_FILES = [CLEANED_HISTORY_FILE, SESSIONS_INDEX_FILE, COMMAND_STATS_FILE
 NTFY_TOPIC = "ntfyclaudetasknextmobilesurmonmobilesuretatfrederic"
 
 SCHEDULED_NOTIFS_FILE = RUNTIME_DIR / "scheduled_notifs.json"
+MCP_SETTINGS_FILE = BASE_DIR / "settings.json"
+MCP_PROFILES_FILE = RUNTIME_DIR / "mcp_profiles.json"
 
 
 def ensure_dirs():

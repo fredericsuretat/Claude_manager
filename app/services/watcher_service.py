@@ -139,13 +139,14 @@ class WatcherService:
         except Exception:
             return []
 
-    def on_rate_limit_detected(self, output_text: str, pending_prompt: str = None):
+    def on_rate_limit_detected(self, output_text: str = "", pending_prompt: str = None, reset_dt=None):
         if self.rate_limited:
             return
         self.rate_limited = True
         self.state = "rate_limited"
         self.auto_prompt = pending_prompt
-        reset_dt = parse_reset_datetime(output_text)
+        if reset_dt is None:
+            reset_dt = parse_reset_datetime(output_text)
         self.reset_at = reset_dt
 
         if reset_dt:

@@ -20,16 +20,16 @@
         <span class="text-lg font-bold tracking-tight text-white">⚡ Claude Control</span>
         <span id="claude-state-badge" class="px-2 py-0.5 rounded text-xs font-semibold bg-gray-700 text-gray-300">—</span>
       </div>
-      <div class="flex items-center gap-4 text-sm text-gray-400">
+      <div class="flex items-center gap-2 sm:gap-4 text-sm text-gray-400">
         <span id="header-model" class="hidden sm:block text-xs font-mono text-indigo-400"></span>
-        <span id="token-summary" class="hidden sm:block"></span>
-        <span id="server-time" class="font-mono text-xs"></span>
+        <span id="token-summary" class="text-xs truncate max-w-[88px] sm:max-w-none"></span>
+        <span id="server-time" class="font-mono text-xs hidden xs:block sm:block"></span>
         <span id="ws-status" class="w-2 h-2 rounded-full bg-red-500 inline-block" title="WebSocket"></span>
       </div>
     </div>
     <!-- Usage bar -->
     <div id="usage-bar-wrap" class="px-4 pb-2 flex items-center gap-2 text-xs">
-      <span id="usage-bar-label" class="text-gray-500 shrink-0 hidden sm:block w-36">Chargement…</span>
+      <span id="usage-bar-label" class="text-gray-500 shrink-0 text-xs sm:text-sm">Chargement…</span>
       <div class="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
         <div id="usage-bar-fill" class="h-full rounded-full bg-green-500 transition-all duration-500" style="width:0%"></div>
       </div>
@@ -67,6 +67,9 @@
       </button>
       <button class="nav-btn" data-tab="mobile">
         <span class="icon">📱</span><span class="label">Mobile</span>
+      </button>
+      <button class="nav-btn" data-tab="mcp">
+        <span class="icon">🔌</span><span class="label">MCP</span>
       </button>
       <button class="nav-btn" data-tab="logs">
         <span class="icon">📋</span><span class="label">Logs</span>
@@ -407,6 +410,58 @@
               <button onclick="refreshCommands()" class="btn-ghost text-xs mt-3">🔄 Rafraîchir</button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- ── MCP CONTROL ── -->
+      <div id="tab-mcp" class="tab-content hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="section-title mb-0">MCP Control</h2>
+          <button onclick="mcpRefresh()" class="btn-ghost text-sm">↺ Rafraîchir</button>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          <!-- Profils -->
+          <div class="card">
+            <div class="card-title mb-3">Profils</div>
+            <div id="mcp-profiles" class="space-y-2"></div>
+            <div class="border-t border-gray-800 mt-4 pt-4">
+              <div class="card-title mb-2">Sauvegarder l'état actuel</div>
+              <div class="flex gap-2">
+                <input id="mcp-save-name" class="input flex-1" placeholder="Nom du profil">
+                <button onclick="mcpSaveProfile()" class="btn-secondary">💾 Sauvegarder</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Serveurs actifs -->
+          <div class="card">
+            <div class="card-title mb-3">Serveurs actifs (<span id="mcp-count">0</span>)</div>
+            <div id="mcp-servers" class="space-y-2 text-sm">
+              <div class="text-gray-500 text-sm">Chargement…</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ajouter un serveur -->
+        <div class="card">
+          <div class="card-title mb-3">Ajouter un serveur MCP</div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-400 mb-1 block">Nom</label>
+              <input id="mcp-add-name" class="input" placeholder="mon-serveur">
+            </div>
+            <div>
+              <label class="text-xs text-gray-400 mb-1 block">Commande</label>
+              <input id="mcp-add-cmd" class="input font-mono" placeholder="npx -y @mon/mcp-server">
+            </div>
+            <div class="sm:col-span-2">
+              <label class="text-xs text-gray-400 mb-1 block">Args JSON (optionnel)</label>
+              <input id="mcp-add-args" class="input font-mono" placeholder='["--arg1", "val1"]'>
+            </div>
+          </div>
+          <button onclick="mcpAddServer()" class="btn-primary mt-3">➕ Ajouter</button>
+          <p class="text-xs text-gray-600 mt-2">Modifie ~/.claude/settings.json · Claude Code recharge automatiquement.</p>
         </div>
       </div>
 

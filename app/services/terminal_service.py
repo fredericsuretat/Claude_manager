@@ -233,13 +233,8 @@ class TerminalService:
             pass
 
         # Notify watcher
-        if self._watcher and state == "rate_limited" and reset_dt:
-            self._watcher.reset_at = reset_dt
-            self._watcher.rate_limited = True
-            self._watcher.state = "rate_limited"
-            claude_usage = getattr(self._watcher, "claude_usage", None)
-            if claude_usage:
-                claude_usage.on_rate_limited(reset_dt)
+        if self._watcher and state == "rate_limited":
+            self._watcher.on_rate_limit_detected(reset_dt=reset_dt)
 
     def _auto_usage(self):
         """Envoie /usage 8s après démarrage, puis Escape pour fermer le modal."""

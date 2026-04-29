@@ -555,6 +555,54 @@ def service_logs():
         return {"lines": [str(e)]}
 
 
+# ── REST: MCP Control ─────────────────────────────────────────────
+from app.services.mcp_service import McpService as _McpService
+_mcp_svc = _McpService()
+
+
+@app.get("/api/mcp/status")
+def mcp_status():
+    return _mcp_svc.get_status()
+
+
+@app.post("/api/mcp/enable")
+def mcp_enable(body: dict):
+    name = body.get("name", "").strip()
+    config = body.get("config", {})
+    if not name:
+        return JSONResponse({"error": "name requis"}, status_code=400)
+    return _mcp_svc.enable_server(name, config)
+
+
+@app.post("/api/mcp/disable")
+def mcp_disable(body: dict):
+    name = body.get("name", "").strip()
+    if not name:
+        return JSONResponse({"error": "name requis"}, status_code=400)
+    return _mcp_svc.disable_server(name)
+
+
+@app.post("/api/mcp/profile/apply")
+def mcp_apply_profile(body: dict):
+    name = body.get("name", "").strip()
+    if not name:
+        return JSONResponse({"error": "name requis"}, status_code=400)
+    return _mcp_svc.apply_profile(name)
+
+
+@app.post("/api/mcp/profile/save")
+def mcp_save_profile(body: dict):
+    name = body.get("name", "").strip()
+    if not name:
+        return JSONResponse({"error": "name requis"}, status_code=400)
+    return _mcp_svc.save_profile(name)
+
+
+@app.delete("/api/mcp/profile/{name}")
+def mcp_delete_profile(name: str):
+    return _mcp_svc.delete_profile(name)
+
+
 # ── Static files ───────────────────────────────────────────────────
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")

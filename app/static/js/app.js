@@ -45,6 +45,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     if (btn.dataset.tab === 'usage') refreshUsage();
     if (btn.dataset.tab === 'terminal') termInit();
     if (btn.dataset.tab === 'service') refreshService();
+    if (btn.dataset.tab === 'mcp') mcpRefresh();
   });
 });
 
@@ -794,6 +795,131 @@ function fmtNum(n) {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
   return String(n);
+}
+
+// ── MCP Control ───────────────────────────────────────────────────
+let _mcpData = null;
+
+async function mcpRefresh() {
+  try {
+    _mcpData = await api('GET', '/api/mcp/status');
+    _renderMcpServers(_mcpData.servers || {});
+    _renderMcpProfiles(_mcpData.profiles || {});
+    setEl('mcp-count', Object.keys(_mcpData.servers || {}).length);
+  } catch (e) {
+    const el = document.getElementById('mcp-servers');
+    if (el) el.innerHTML = `<div class="text-red-400 text-sm">Erreur: ${e.message}</div>`;
+  }
+}
+
+function _renderMcpServers(servers) {
+  const el = document.getElementById('mcp-servers');
+  if (!el) return;
+  const names = Object.keys(servers);
+  if (!names.length) {
+    el.innerHTML = '<div class="text-gray-500 text-sm">Aucun serveur MCP actif.</div>';
+    return;
+  }
+  el.innerHTML = names.map(name => {
+    const cfg = servers[name];
+    const cmd = cfg.command ? `${cfg.command} ${(cfg.args || []).join(' ')}`.trim() : JSON.stringify(cfg);
+    return `<div class="flex items-center justify-between gap-2 border border-gray-700 rounded-lg px-3 py-2">
+      <div>
+        <span class="font-mono text-indigo-300">${name}</span>
+        <div class="text-gray-500 text-xs truncate max-w-[200px]" title="${cmd}">${cmd}</div>
+      </div>
+      <button onclick="mcpDisable('${name}')" class="btn-ghost text-xs shrink-0 text-red-400 border-red-900">⏹ Désactiver</button>
+    </div>`;
+  }).join('');
+}
+
+function _renderMcpProfiles(profiles) {
+  const el = document.getElementById('mcp-profiles');
+  if (!el) return;
+  const profileColors = { MINIMAL: 'text-gray-300', DEV: 'text-blue-300', PERSONAL: 'text-violet-300' };
+  el.innerHTML = Object.entries(profiles).map(([name, servers]) => {
+    const color = profileColors[name] || 'text-cyan-300';
+    const count = servers.length;
+    const label = count === 0 ? 'Aucun serveur' : `${count} serveur${count > 1 ? 's' : ''}`;
+    return `<div class="flex items-center justify-between gap-2 border border-gray-700 rounded-lg px-3 py-2">
+      <div>
+        <span class="font-semibold ${color}">${name}</span>
+        <span class="text-gray-500 text-xs ml-2">${label}${servers.length ? ': ' + servers.join(', ') : ''}</span>
+      </div>
+      <div class="flex gap-1 shrink-0">
+        <button onclick="mcpApplyProfile('${name}')" class="btn-primary text-xs py-1 px-2">▶ Appliquer</button>
+        ${!['MINIMAL','DEV','PERSONAL'].includes(name)
+          ? `<button onclick="mcpDeleteProfile('${name}')" class="btn-ghost text-xs text-red-400 border-red-900 py-1 px-2">✕</button>`
+          : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function mcpApplyProfile(name) {
+  try {
+    const r = await api('POST', '/api/mcp/profile/apply', { name });
+    if (r.ok) {
+      await mcpRefresh();
+    } else {
+      alert(`Erreur: ${r.error}`);
+    }
+  } catch (e) { alert(`Erreur: ${e.message}`); }
+}
+
+async function mcpSaveProfile() {
+  const name = document.getElementById('mcp-save-name').value.trim().toUpperCase();
+  if (!name) { alert('Nom de profil requis.'); return; }
+  try {
+    const r = await api('POST', '/api/mcp/profile/save', { name });
+    if (r.ok) {
+      document.getElementById('mcp-save-name').value = '';
+      await mcpRefresh();
+    } else {
+      alert(`Erreur: ${r.error}`);
+    }
+  } catch (e) { alert(`Erreur: ${e.message}`); }
+}
+
+async function mcpDeleteProfile(name) {
+  if (!confirm(`Supprimer le profil "${name}" ?`)) return;
+  try {
+    const r = await api('DELETE', `/api/mcp/profile/${name}`);
+    if (r.ok) await mcpRefresh();
+    else alert(`Erreur: ${r.error}`);
+  } catch (e) { alert(`Erreur: ${e.message}`); }
+}
+
+async function mcpDisable(name) {
+  try {
+    const r = await api('POST', '/api/mcp/disable', { name });
+    if (r.ok) await mcpRefresh();
+    else alert(`Erreur: ${r.error}`);
+  } catch (e) { alert(`Erreur: ${e.message}`); }
+}
+
+async function mcpAddServer() {
+  const name = document.getElementById('mcp-add-name').value.trim();
+  const cmd  = document.getElementById('mcp-add-cmd').value.trim();
+  const argsRaw = document.getElementById('mcp-add-args').value.trim();
+  if (!name || !cmd) { alert('Nom et commande requis.'); return; }
+  let args = [];
+  if (argsRaw) {
+    try { args = JSON.parse(argsRaw); }
+    catch { alert('Args invalides — doit être un tableau JSON. Ex: ["--port", "3000"]'); return; }
+  }
+  const config = { command: cmd, args };
+  try {
+    const r = await api('POST', '/api/mcp/enable', { name, config });
+    if (r.ok) {
+      document.getElementById('mcp-add-name').value = '';
+      document.getElementById('mcp-add-cmd').value = '';
+      document.getElementById('mcp-add-args').value = '';
+      await mcpRefresh();
+    } else {
+      alert(`Erreur: ${r.error}`);
+    }
+  } catch (e) { alert(`Erreur: ${e.message}`); }
 }
 
 // ── Tab helper (programmatic switch) ─────────────────────────────
