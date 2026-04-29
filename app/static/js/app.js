@@ -2,6 +2,9 @@
 let ws = null;
 let currentMemKey = 'claude_md';
 let tokenData = null;
+let term = null;
+let fitAddon = null;
+let termInitialized = false;
 
 // ── WebSocket ────────────────────────────────────────────────────
 function connectWs() {
@@ -22,6 +25,8 @@ function connectWs() {
       const msg = JSON.parse(e.data);
       if (msg.type === 'log') appendLog(msg.msg);
       if (msg.type === 'status') applyStatus(msg.data);
+      if (msg.type === 'terminal_output' && term) term.write(msg.data);
+      if (msg.type === 'terminal_state') termUpdateState(msg.state, msg.reset_at);
     } catch {}
   };
 }
@@ -38,6 +43,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     if (btn.dataset.tab === 'memory') loadMemory(currentMemKey);
     if (btn.dataset.tab === 'mobile') refreshCommands();
     if (btn.dataset.tab === 'usage') refreshUsage();
+    if (btn.dataset.tab === 'terminal') termInit();
   });
 });
 
@@ -387,6 +393,87 @@ function renderOptimization(data) {
         ${s.items.map(i => `<li class="flex gap-2"><span class="text-gray-500 shrink-0">·</span>${i}</li>`).join('')}
       </ul>
     </div>`).join('');
+}
+
+// ── Terminal (xterm.js) ───────────────────────────────────────────
+function termInit() {
+  if (termInitialized) { if (fitAddon) fitAddon.fit(); return; }
+  termInitialized = true;
+
+  term = new Terminal({
+    theme: { background: '#000000', foreground: '#f0f0f0', cursor: '#ffffff', selectionBackground: '#444' },
+    fontFamily: '"Cascadia Code", "Fira Mono", "Consolas", monospace',
+    fontSize: 13,
+    lineHeight: 1.2,
+    convertEol: false,
+    scrollback: 3000,
+    cursorBlink: true,
+  });
+
+  fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(document.getElementById('terminal-container'));
+  fitAddon.fit();
+
+  // Raw keystrokes → backend PTY
+  term.onData(data => {
+    api('POST', '/api/terminal/write', { data }).catch(() => {});
+  });
+
+  // Re-fit on container resize
+  const ro = new ResizeObserver(() => { if (fitAddon) fitAddon.fit(); });
+  ro.observe(document.getElementById('terminal-container'));
+
+  term.writeln('\x1b[90m[Terminal prêt — cliquez sur ▶ Démarrer pour lancer Claude]\x1b[0m');
+
+  // Sync current state
+  api('GET', '/api/terminal/status').then(s => termUpdateState(s.state, null)).catch(() => {});
+}
+
+function termUpdateState(state, reset_at) {
+  const badge = document.getElementById('term-state-badge');
+  if (!badge) return;
+  const labels = { idle: 'idle', running: '🟢 En cours', rate_limited: '🚫 Rate limit', dead: '💀 Arrêté', waiting: '⏳ Attente' };
+  const colors  = {
+    running:      'bg-green-900 text-green-300',
+    rate_limited: 'bg-red-900 text-red-300',
+    dead:         'bg-gray-700 text-gray-400',
+    idle:         'bg-gray-700 text-gray-300',
+    waiting:      'bg-amber-900 text-amber-300',
+  };
+  badge.textContent = labels[state] || state;
+  badge.className = `px-2 py-0.5 rounded text-xs font-semibold ${colors[state] || 'bg-gray-700 text-gray-300'}`;
+  if (term && state === 'rate_limited') {
+    term.write(`\r\n\x1b[31m[RATE LIMIT ATTEINT${reset_at ? ` — Reset: ${reset_at}` : ''}]\x1b[0m\r\n`);
+  }
+  if (term && state === 'dead') {
+    term.write('\r\n\x1b[90m[Session terminée]\x1b[0m\r\n');
+  }
+}
+
+async function termStart() {
+  const autonomous = document.getElementById('term-autonomous')?.checked || false;
+  try {
+    const r = await api('POST', '/api/terminal/start', { autonomous });
+    if (r.error && term) term.write(`\r\n\x1b[33m[${r.error}]\x1b[0m\r\n`);
+  } catch (e) {
+    if (term) term.write(`\r\n\x1b[31m[Erreur démarrage: ${e.message}]\x1b[0m\r\n`);
+  }
+}
+
+async function termStop() {
+  try { await api('POST', '/api/terminal/stop'); } catch {}
+}
+
+async function termInterrupt() {
+  try { await api('POST', '/api/terminal/interrupt'); } catch {}
+}
+
+function termSend() {
+  const input = document.getElementById('term-input');
+  if (!input || !input.value) return;
+  api('POST', '/api/terminal/send', { text: input.value }).catch(() => {});
+  input.value = '';
 }
 
 // ── Watcher actions ───────────────────────────────────────────────

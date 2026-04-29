@@ -6,6 +6,10 @@
   <title>Claude Control</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/static/css/style.css">
+  <!-- xterm.js — terminal dans le navigateur -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 </head>
 <body class="bg-gray-950 text-gray-100 min-h-screen flex flex-col">
 
@@ -31,6 +35,9 @@
       </button>
       <button class="nav-btn" data-tab="execute">
         <span class="icon">▶</span><span class="label">Exécuter</span>
+      </button>
+      <button class="nav-btn" data-tab="terminal">
+        <span class="icon">💻</span><span class="label">Terminal</span>
       </button>
       <button class="nav-btn" data-tab="tokens">
         <span class="icon">🔢</span><span class="label">Tokens</span>
@@ -143,6 +150,32 @@
           </div>
 
         </div>
+      </div>
+
+      <!-- ── TERMINAL ── -->
+      <div id="tab-terminal" class="tab-content hidden">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h2 class="section-title mb-0">Terminal Claude</h2>
+          <div class="flex flex-wrap items-center gap-2">
+            <span id="term-state-badge" class="px-2 py-0.5 rounded text-xs font-semibold bg-gray-700 text-gray-300">idle</span>
+            <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer select-none">
+              <input type="checkbox" id="term-autonomous" class="accent-violet-500"> Mode autonome
+            </label>
+            <button onclick="termStart()" class="btn-primary text-sm">▶ Démarrer</button>
+            <button onclick="termStop()" class="btn-ghost text-sm">■ Arrêter</button>
+            <button onclick="termInterrupt()" class="btn-secondary text-sm">⊘ Ctrl+C</button>
+          </div>
+        </div>
+        <div class="rounded-lg overflow-hidden border border-gray-800 mb-3" style="height:500px; background:#000">
+          <div id="terminal-container" style="height:100%;"></div>
+        </div>
+        <div class="flex gap-2">
+          <input id="term-input" class="input flex-1 font-mono text-sm"
+                 placeholder="Texte à envoyer (Entrée pour valider)…"
+                 onkeydown="if(event.key==='Enter'){termSend();event.preventDefault();}">
+          <button onclick="termSend()" class="btn-secondary">Envoyer ↩</button>
+        </div>
+        <p class="text-xs text-gray-500 mt-2">Le terminal capte le clavier directement. Utilisez ce champ pour envoyer des commandes complètes.</p>
       </div>
 
       <!-- ── EXECUTE ── -->

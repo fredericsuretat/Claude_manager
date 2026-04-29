@@ -21,6 +21,7 @@ from app.services.token_monitor_service import TokenMonitorService
 from app.services.usage_parse_service import UsageParseService
 from app.services.watcher_service import WatcherService
 from app.services.claude_usage_service import ClaudeUsageService
+from app.services.terminal_service import TerminalService
 
 # ── Init ────────────────────────────────────────────────────────
 ensure_dirs()
@@ -56,6 +57,9 @@ executor_svc.watcher = watcher_svc
 listener_svc.watcher = watcher_svc
 watcher_svc.claude_usage = claude_usage_svc  # watcher notifie usage service lors d'un rate limit
 
+# Terminal service (créé après ws_manager — initialisé dans startup)
+terminal_svc: TerminalService = None  # type: ignore
+
 
 def on_command(msg: str):
     command_history.insert(0, {"ts": datetime.now().isoformat(), "msg": msg})
@@ -78,7 +82,9 @@ class WsManager:
             self._clients.remove(ws)
 
     async def broadcast(self, data: dict):
-        msg = json.dumps(data)
+        await self.broadcast_raw(json.dumps(data))
+
+    async def broadcast_raw(self, msg: str):
         dead = []
         for ws in self._clients:
             try:
@@ -86,7 +92,8 @@ class WsManager:
             except Exception:
                 dead.append(ws)
         for ws in dead:
-            self._clients.remove(ws)
+            if ws in self._clients:
+                self._clients.remove(ws)
 
 
 ws_manager = WsManager()
@@ -95,6 +102,12 @@ ws_manager = WsManager()
 # ── Startup ──────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
+    global terminal_svc
+    terminal_svc = TerminalService(
+        ws_manager=ws_manager,
+        watcher=watcher_svc,
+        logger=sync_logger,
+    )
     watcher_svc.start()
     listener_svc.start()
     asyncio.create_task(_log_broadcaster())
@@ -149,6 +162,40 @@ async def ws_endpoint(ws: WebSocket):
             await ws.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(ws)
+
+
+# ── REST: Terminal (PTY) ─────────────────────────────────────────
+@app.post("/api/terminal/start")
+def terminal_start(body: dict = {}):
+    autonomous = body.get("autonomous", False)
+    return terminal_svc.start(autonomous=autonomous)
+
+
+@app.post("/api/terminal/stop")
+def terminal_stop():
+    return terminal_svc.stop()
+
+
+@app.post("/api/terminal/write")
+def terminal_write(body: dict):
+    data = body.get("data", "")
+    return terminal_svc.write(data)
+
+
+@app.post("/api/terminal/send")
+def terminal_send(body: dict):
+    text = body.get("text", "")
+    return terminal_svc.send_line(text)
+
+
+@app.post("/api/terminal/interrupt")
+def terminal_interrupt():
+    return terminal_svc.interrupt()
+
+
+@app.get("/api/terminal/status")
+def terminal_status():
+    return terminal_svc.get_status() if terminal_svc else {"state": "idle", "alive": False}
 
 
 # ── REST: Status ─────────────────────────────────────────────────
