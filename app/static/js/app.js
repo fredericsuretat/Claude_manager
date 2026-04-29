@@ -41,9 +41,10 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     // Auto-load on tab switch
     if (btn.dataset.tab === 'tokens') refreshTokens();
     if (btn.dataset.tab === 'memory') loadMemory(currentMemKey);
-    if (btn.dataset.tab === 'mobile') refreshCommands();
+    if (btn.dataset.tab === 'mobile') { refreshCommands(); refreshScheduled(); }
     if (btn.dataset.tab === 'usage') refreshUsage();
     if (btn.dataset.tab === 'terminal') termInit();
+    if (btn.dataset.tab === 'service') refreshService();
   });
 });
 
@@ -102,6 +103,7 @@ function applyStatus(data) {
 
   // ── Usage bar (header) ──────────────────────────────────────────
   updateUsageBar(data.claude_usage || {});
+  if ((data.claude_usage || {}).live) renderLiveUsage(data.claude_usage.live);
 
   // Claude usage mini-dashboard card
   const cu = data.claude_usage || {};
@@ -120,44 +122,118 @@ function applyStatus(data) {
 }
 
 // ── Usage bar (header) ───────────────────────────────────────────
-// Pro plan: ~45 msgs / 5h window (limite approximative connue)
-const CLAUDE_PRO_LIMIT = 45;
-
 function updateUsageBar(cu) {
   const label   = document.getElementById('usage-bar-label');
   const fill    = document.getElementById('usage-bar-fill');
   const right   = document.getElementById('usage-bar-right');
   if (!label || !fill || !right) return;
 
-  const msgs = (cu.today || {}).messageCount || 0;
+  const live = cu.live || {};
+  const sessionPct = live.session_pct != null ? live.session_pct : null;
+  const weekPct    = live.week_pct;
+  const resetStr   = live.session_reset_str;
 
-  if (cu.rate_limited) {
-    label.textContent = '🚫 Rate limit';
-    label.className = 'text-red-400 shrink-0 w-28 font-semibold';
+  if (cu.rate_limited || sessionPct === 100) {
+    label.textContent = '🚫 Quota atteint';
+    label.className = 'text-red-400 shrink-0 w-36 font-semibold';
     fill.style.width = '100%';
     fill.className = 'h-full rounded-full bg-red-500 transition-all duration-500';
-    right.textContent = cu.reset_at ? `Reset ${cu.reset_at}` : '';
+    const resetInfo = resetStr || cu.reset_at;
+    right.textContent = resetInfo ? `Reset ${resetInfo}` : '';
     right.className = 'text-red-400 shrink-0 text-right min-w-24';
-  } else {
-    const pct = Math.min(Math.round((msgs / CLAUDE_PRO_LIMIT) * 100), 100);
-    const color = pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-green-500';
-    label.textContent = `${msgs} msg aujourd'hui`;
-    label.className = 'text-gray-400 shrink-0 w-28';
-    fill.style.width = `${pct}%`;
+  } else if (sessionPct != null) {
+    const color = sessionPct >= 80 ? 'bg-red-500' : sessionPct >= 60 ? 'bg-amber-500' : 'bg-green-500';
+    const weekInfo = weekPct != null ? ` · sem. ${weekPct}%` : '';
+    label.textContent = `Session ${sessionPct}%${weekInfo}`;
+    label.className = 'text-gray-300 shrink-0 w-36';
+    fill.style.width = `${sessionPct}%`;
     fill.className = `h-full rounded-full ${color} transition-all duration-500`;
-    right.textContent = `≈${pct}%`;
+    right.textContent = resetStr ? `↺ ${resetStr}` : '';
     right.className = 'text-gray-500 shrink-0 text-right min-w-24';
+  } else {
+    // Aucune donnée live — indiquer l'action à faire
+    const plan = (cu.subscription || 'pro').toUpperCase();
+    label.textContent = `${plan} · /usage ?`;
+    label.className = 'text-gray-600 shrink-0 w-36 cursor-pointer hover:text-gray-400';
+    label.title = 'Lance /usage dans le terminal pour voir le quota en temps réel';
+    fill.style.width = '0%';
+    fill.className = 'h-full rounded-full bg-gray-800 transition-all duration-500';
+    right.textContent = '';
   }
 }
 
 // ── Usage ─────────────────────────────────────────────────────────
 async function refreshUsage() {
   try {
-    const data = await api('GET', '/api/claude-usage');
+    const [data, live] = await Promise.all([
+      api('GET', '/api/claude-usage'),
+      api('GET', '/api/claude-usage/live').catch(() => null),
+    ]);
     renderUsage(data);
+    if (live) renderLiveUsage(live);
   } catch (e) {
     console.error('Usage refresh error:', e);
   }
+}
+
+async function refreshLiveUsage() {
+  const el = document.getElementById('u-live-content');
+  if (el) el.innerHTML = '<div class="text-amber-400 text-sm">⏳ Envoi /usage au terminal… (résultat dans ~3s)</div>';
+  try {
+    const r = await api('POST', '/api/claude-usage/live/refresh');
+    if (!r.triggered) {
+      if (el) el.innerHTML = '<div class="text-amber-400 text-sm">⚠️ Terminal inactif — démarre une session dans l\'onglet Terminal puis retente.</div>';
+      return;
+    }
+    // Attendre ~3s que le résultat arrive via le flux PTY
+    await new Promise(res => setTimeout(res, 3000));
+    const live = await api('GET', '/api/claude-usage/live');
+    renderLiveUsage(live);
+    updateUsageBar({ live, rate_limited: false });
+  } catch (e) {
+    if (el) el.innerHTML = `<div class="text-red-400 text-sm">Erreur: ${e.message}</div>`;
+  }
+}
+
+function renderLiveUsage(live) {
+  const el = document.getElementById('u-live-content');
+  if (!el) return;
+
+  if (!live || live.error || (live.session_pct == null && live.week_pct == null)) {
+    el.innerHTML = '<div class="text-gray-500 text-sm">Données non disponibles — cliquez sur Capturer.</div>';
+    return;
+  }
+
+  const sPct = live.session_pct;
+  const wPct = live.week_pct;
+  const sColor = sPct >= 80 ? 'bg-red-500' : sPct >= 60 ? 'bg-amber-500' : 'bg-green-500';
+  const wColor = wPct >= 80 ? 'bg-red-500' : wPct >= 60 ? 'bg-amber-500' : 'bg-green-500';
+  const capturedAt = live.captured_at ? new Date(live.captured_at).toLocaleTimeString('fr') : '?';
+
+  el.innerHTML = `
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
+      <div>
+        <div class="flex justify-between text-sm mb-1">
+          <span class="text-gray-400">Session (fenêtre 5h)</span>
+          <span class="font-bold ${sPct >= 80 ? 'text-red-400' : sPct >= 60 ? 'text-amber-400' : 'text-green-400'}">${sPct != null ? sPct + '%' : '—'}</span>
+        </div>
+        <div class="h-3 bg-gray-800 rounded-full overflow-hidden">
+          <div class="h-full rounded-full ${sColor}" style="width:${sPct ?? 0}%"></div>
+        </div>
+        ${live.session_reset_str ? `<div class="text-xs text-gray-500 mt-1">↺ Reset ${live.session_reset_str}</div>` : ''}
+      </div>
+      <div>
+        <div class="flex justify-between text-sm mb-1">
+          <span class="text-gray-400">Semaine</span>
+          <span class="font-bold ${wPct >= 80 ? 'text-red-400' : wPct >= 60 ? 'text-amber-400' : 'text-green-400'}">${wPct != null ? wPct + '%' : '—'}</span>
+        </div>
+        <div class="h-3 bg-gray-800 rounded-full overflow-hidden">
+          <div class="h-full rounded-full ${wColor ?? 'bg-gray-700'}" style="width:${wPct ?? 0}%"></div>
+        </div>
+        ${live.week_reset_str ? `<div class="text-xs text-gray-500 mt-1">↺ Reset ${live.week_reset_str}</div>` : ''}
+      </div>
+    </div>
+    <div class="text-xs text-gray-600">Capturé à ${capturedAt} · source: ${live.source || 'pty'}</div>`;
 }
 
 function renderUsage(data) {
@@ -269,9 +345,16 @@ async function refreshTokens() {
       const colors = { LOW: 'text-green-400', MEDIUM: 'text-amber-400', HIGH: 'text-red-400', UNKNOWN: 'text-gray-400' };
       driftEl.innerHTML = `<span class="${colors[drift.level] || ''}">Dérive contexte : ${drift.level || '—'}</span> ${(drift.reasons || []).join(' · ')}`;
     }
-    // Token summary in header
+    // Token summary + model in header
     if (snap.total_tokens) {
       document.getElementById('token-summary').textContent = `${fmtNum(snap.total_tokens)} tok · $${(snap.last_cost || 0).toFixed(4)}`;
+    }
+    if (snap.top_model) {
+      const modelEl = document.getElementById('header-model');
+      if (modelEl) {
+        const short = snap.top_model.replace('claude-', '').replace(/-\d{8}$/, '');
+        modelEl.textContent = short;
+      }
     }
   } catch (e) {
     console.error('Token refresh error:', e);
@@ -455,8 +538,15 @@ function termInit() {
     api('POST', '/api/terminal/write', { data }).catch(() => {});
   });
 
-  // Re-fit on container resize
-  const ro = new ResizeObserver(() => { if (fitAddon) fitAddon.fit(); });
+  // Sync PTY dimensions when xterm resizes
+  term.onResize(({ rows, cols }) => {
+    api('POST', '/api/terminal/resize', { rows, cols }).catch(() => {});
+  });
+
+  // Re-fit and notify backend on container resize
+  const ro = new ResizeObserver(() => {
+    if (fitAddon) fitAddon.fit(); // triggers term.onResize automatically
+  });
   ro.observe(document.getElementById('terminal-container'));
 
   // Sync current state and show appropriate message
@@ -495,15 +585,16 @@ function termUpdateState(state, reset_at) {
 
 async function termStart() {
   const autonomous = document.getElementById('term-autonomous')?.checked || false;
+  const rows = term ? term.rows : 40;
+  const cols = term ? term.cols : 220;
   try {
-    // Stop existing session first if alive
     const status = await api('GET', '/api/terminal/status');
     if (status.alive) {
       await api('POST', '/api/terminal/stop');
       if (term) term.write('\r\n\x1b[90m[Session précédente arrêtée]\x1b[0m\r\n');
       await new Promise(r => setTimeout(r, 500));
     }
-    const r = await api('POST', '/api/terminal/start', { autonomous });
+    const r = await api('POST', '/api/terminal/start', { autonomous, rows, cols });
     if (!r.ok && r.error && term) term.write(`\r\n\x1b[33m[${r.error}]\x1b[0m\r\n`);
   } catch (e) {
     if (term) term.write(`\r\n\x1b[31m[Erreur démarrage: ${e.message}]\x1b[0m\r\n`);
@@ -547,6 +638,50 @@ async function sendNotifyMobile() {
   const message = document.getElementById('mob-msg').value.trim() || '—';
   const priority = parseInt(document.getElementById('mob-priority').value);
   await api('POST', '/api/notify', { title, message, priority });
+}
+
+async function scheduleNotif() {
+  const title = document.getElementById('sched-title').value.trim() || 'CC';
+  const message = document.getElementById('sched-msg').value.trim();
+  const date = document.getElementById('sched-date').value;
+  const time = document.getElementById('sched-time').value;
+  const priority = parseInt(document.getElementById('sched-priority').value);
+  if (!message || !date || !time) { alert('Remplis message, date et heure.'); return; }
+  const at = `${date}T${time}:00`;
+  try {
+    await api('POST', '/api/notifications/schedule', { title, message, at, priority });
+    document.getElementById('sched-msg').value = '';
+    await refreshScheduled();
+  } catch (e) { alert(`Erreur: ${e.message}`); }
+}
+
+async function refreshScheduled() {
+  try {
+    const data = await api('GET', '/api/notifications/scheduled');
+    const el = document.getElementById('sched-list');
+    if (!el) return;
+    if (!data.notifications.length) { el.innerHTML = '<div class="text-gray-600">Aucune</div>'; return; }
+    el.innerHTML = data.notifications.map((n, i) => {
+      const dt = new Date(n.at).toLocaleString('fr', { dateStyle:'short', timeStyle:'short' });
+      return `<div class="flex justify-between items-center border-b border-gray-800 py-1 gap-2">
+        <div>
+          <span class="text-gray-300 font-semibold">${n.title}</span>
+          <span class="text-gray-500 ml-2">${n.message.slice(0, 40)}${n.message.length > 40 ? '…' : ''}</span>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <span class="text-violet-400">${dt}</span>
+          <button onclick="deleteScheduled(${i})" class="text-red-500 hover:text-red-300 text-xs">✕</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch {}
+}
+
+async function deleteScheduled(idx) {
+  try {
+    await api('DELETE', `/api/notifications/scheduled/${idx}`);
+    await refreshScheduled();
+  } catch (e) { alert(`Erreur: ${e.message}`); }
 }
 
 async function simulateCmd() {
@@ -594,6 +729,58 @@ function appendLog(msg) {
 function clearLogs() {
   const box = document.getElementById('log-box');
   if (box) box.innerHTML = '';
+}
+
+// ── Service management ───────────────────────────────────────────
+function _svcBadge(active) {
+  const badge = document.getElementById('svc-badge');
+  if (!badge) return;
+  badge.textContent = active ? '🟢 Actif' : '🔴 Arrêté';
+  badge.className = `px-2 py-0.5 rounded text-xs font-semibold ${active ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}`;
+}
+
+async function refreshService() {
+  try {
+    const [status] = await Promise.all([
+      api('GET', '/api/service/status'),
+      refreshServiceLogs(),
+    ]);
+    _svcBadge(status.active);
+  } catch (e) {
+    _svcBadge(false);
+  }
+}
+
+async function refreshServiceLogs() {
+  const el = document.getElementById('svc-logs');
+  if (!el) return;
+  try {
+    const data = await api('GET', '/api/service/logs');
+    el.innerHTML = (data.lines || []).map(l => {
+      const cls = l.includes('ERROR') || l.includes('FAIL') || l.includes('error') ? 'log-error' :
+                  l.includes('WARN') ? 'log-warn' :
+                  l.includes('INFO') ? 'log-info' : 'log-dim';
+      return `<div class="${cls}">${l.replace(/</g, '&lt;')}</div>`;
+    }).join('');
+    el.scrollTop = el.scrollHeight;
+  } catch (e) {
+    el.innerHTML = `<div class="text-red-400">Erreur lecture logs: ${e.message}</div>`;
+  }
+}
+
+async function serviceRestart() {
+  const badge = document.getElementById('svc-badge');
+  if (badge) { badge.textContent = '⏳ Redémarrage…'; badge.className = 'px-2 py-0.5 rounded text-xs font-semibold bg-amber-900 text-amber-300'; }
+  try {
+    const r = await api('POST', '/api/service/restart');
+    if (!r.ok) alert(`Erreur redémarrage: ${r.error || r.stderr || 'inconnu'}`);
+    // Attendre que le service redémarre avant de relire les logs
+    await new Promise(res => setTimeout(res, 3000));
+    await refreshService();
+  } catch (e) {
+    alert(`Erreur: ${e.message}`);
+    await refreshService();
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────

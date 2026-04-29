@@ -21,18 +21,19 @@
         <span id="claude-state-badge" class="px-2 py-0.5 rounded text-xs font-semibold bg-gray-700 text-gray-300">—</span>
       </div>
       <div class="flex items-center gap-4 text-sm text-gray-400">
+        <span id="header-model" class="hidden sm:block text-xs font-mono text-indigo-400"></span>
         <span id="token-summary" class="hidden sm:block"></span>
         <span id="server-time" class="font-mono text-xs"></span>
         <span id="ws-status" class="w-2 h-2 rounded-full bg-red-500 inline-block" title="WebSocket"></span>
       </div>
     </div>
     <!-- Usage bar -->
-    <div id="usage-bar-wrap" class="px-4 pb-2 flex items-center gap-3 text-xs">
-      <span id="usage-bar-label" class="text-gray-500 shrink-0 w-28">Chargement…</span>
+    <div id="usage-bar-wrap" class="px-4 pb-2 flex items-center gap-2 text-xs">
+      <span id="usage-bar-label" class="text-gray-500 shrink-0 hidden sm:block w-36">Chargement…</span>
       <div class="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
         <div id="usage-bar-fill" class="h-full rounded-full bg-green-500 transition-all duration-500" style="width:0%"></div>
       </div>
-      <span id="usage-bar-right" class="text-gray-500 shrink-0 text-right min-w-24"></span>
+      <span id="usage-bar-right" class="text-gray-500 shrink-0 text-right w-10"></span>
     </div>
   </header>
 
@@ -69,6 +70,9 @@
       </button>
       <button class="nav-btn" data-tab="logs">
         <span class="icon">📋</span><span class="label">Logs</span>
+      </button>
+      <button class="nav-btn" data-tab="service">
+        <span class="icon">⚙️</span><span class="label">Service</span>
       </button>
     </nav>
 
@@ -176,7 +180,7 @@
             <button onclick="termInterrupt()" class="btn-secondary text-sm">⊘ Ctrl+C</button>
           </div>
         </div>
-        <div class="rounded-lg overflow-hidden border border-gray-800 mb-3" style="height:500px; background:#000">
+        <div class="rounded-lg overflow-hidden border border-gray-800 mb-3 terminal-wrap">
           <div id="terminal-container" style="height:100%;"></div>
         </div>
         <div class="flex gap-2">
@@ -299,6 +303,17 @@
           </div>
         </div>
 
+        <!-- Live usage (session %) -->
+        <div class="card mb-4">
+          <div class="flex items-center justify-between mb-3">
+            <div class="card-title">Usage session (temps réel)</div>
+            <button onclick="refreshLiveUsage()" class="btn-ghost text-xs">🔄 Capturer</button>
+          </div>
+          <div id="u-live-content">
+            <div class="text-gray-500 text-sm">En attente de la première capture (~45s au démarrage)…</div>
+          </div>
+        </div>
+
         <!-- 7-day activity chart -->
         <div class="card mb-4">
           <div class="card-title mb-3">Activité — 7 derniers jours</div>
@@ -360,10 +375,37 @@
               <button onclick="simulateCmd()" class="btn-secondary mt-2 w-full">⚡ Exécuter</button>
             </div>
           </div>
-          <div class="card">
-            <div class="card-title mb-2">Historique des commandes reçues</div>
-            <div id="cmd-history" class="space-y-1 max-h-96 overflow-y-auto text-sm font-mono"></div>
-            <button onclick="refreshCommands()" class="btn-ghost text-xs mt-3">🔄 Rafraîchir</button>
+          <div class="space-y-4">
+            <!-- Notifications planifiées -->
+            <div class="card">
+              <div class="card-title mb-3">Planifier une notification</div>
+              <input id="sched-title" class="input mb-2" placeholder="Titre" value="Claude Control">
+              <textarea id="sched-msg" class="input mb-2 h-12 resize-none" placeholder="Message"></textarea>
+              <div class="flex gap-2 mb-2">
+                <input id="sched-date" class="input" type="date">
+                <input id="sched-time" class="input" type="time" value="19:30">
+              </div>
+              <select id="sched-priority" class="input mb-3 w-auto">
+                <option value="3">Priorité normale</option>
+                <option value="5">Urgente</option>
+                <option value="1">Basse</option>
+              </select>
+              <button onclick="scheduleNotif()" class="btn-primary w-full">⏰ Planifier</button>
+            </div>
+            <!-- Liste des notifs planifiées -->
+            <div class="card">
+              <div class="flex items-center justify-between mb-2">
+                <div class="card-title mb-0">Planifiées</div>
+                <button onclick="refreshScheduled()" class="btn-ghost text-xs">↺</button>
+              </div>
+              <div id="sched-list" class="space-y-1 text-xs text-gray-400">Aucune</div>
+            </div>
+            <!-- Historique commandes -->
+            <div class="card">
+              <div class="card-title mb-2">Historique commandes reçues</div>
+              <div id="cmd-history" class="space-y-1 max-h-48 overflow-y-auto text-sm font-mono"></div>
+              <button onclick="refreshCommands()" class="btn-ghost text-xs mt-3">🔄 Rafraîchir</button>
+            </div>
           </div>
         </div>
       </div>
@@ -378,6 +420,27 @@
           </label>
         </div>
         <div id="log-box" class="output-box h-[60vh] overflow-y-auto text-xs font-mono leading-5"></div>
+      </div>
+
+      <!-- ── SERVICE ── -->
+      <div id="tab-service" class="tab-content hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="section-title mb-0">Service systemd</h2>
+          <div class="flex gap-2 items-center">
+            <span id="svc-badge" class="px-2 py-0.5 rounded text-xs font-semibold bg-gray-700 text-gray-400">—</span>
+            <button onclick="serviceRestart()" class="btn-primary">🔄 Redémarrer</button>
+            <button onclick="refreshService()" class="btn-ghost">↺</button>
+          </div>
+        </div>
+
+        <!-- Logs card (pleine hauteur) -->
+        <div class="card">
+          <div class="flex items-center justify-between mb-3">
+            <div class="card-title mb-0">Logs journalctl (100 dernières lignes)</div>
+            <button onclick="refreshServiceLogs()" class="btn-ghost text-xs">↺ Rafraîchir</button>
+          </div>
+          <div id="svc-logs" class="output-box h-[65vh] overflow-y-auto text-xs font-mono leading-5"></div>
+        </div>
       </div>
 
     </main>

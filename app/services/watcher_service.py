@@ -4,6 +4,7 @@ import shutil
 import threading
 import time
 from datetime import datetime
+from typing import Optional
 
 RATE_LIMIT_PATTERNS = [
     r"you've hit your limit",
@@ -66,9 +67,23 @@ class WatcherService:
         self._last_process_count = 0
         self.on_state_change = None
 
+        # Notification rate limiting
+        self._became_running_at: Optional[float] = None
+        self._last_notif_ts: dict = {}   # type → timestamp
+        self._MIN_RUN_SECS = 90          # minimum Claude run time before "libre" notif
+        self._NOTIF_COOLDOWN = 300       # 5 min between same-type notifications
+
     def log(self, msg):
         if self.logger:
             self.logger(msg)
+
+    def _can_notify(self, notif_type: str) -> bool:
+        """Rate-limit: same notification type max once per NOTIF_COOLDOWN seconds."""
+        now = time.time()
+        if now - self._last_notif_ts.get(notif_type, 0) >= self._NOTIF_COOLDOWN:
+            self._last_notif_ts[notif_type] = now
+            return True
+        return False
 
     def start(self):
         if self.running:
@@ -100,10 +115,14 @@ class WatcherService:
             if self.state == "running":
                 self.state = "idle"
                 self.log("[WATCHER] Claude inactif")
-                self.mobile.notify("💤 Claude libre", "Claude a terminé et attend des ordres.")
+                run_secs = time.time() - (self._became_running_at or 0)
+                if run_secs >= self._MIN_RUN_SECS and self._can_notify("libre"):
+                    self.mobile.notify("💤 Claude libre", "Claude a terminé et attend des ordres.")
+                self._became_running_at = None
         else:
             if self.state in ("idle", "unknown", "rate_limited") and not self.rate_limited:
                 self.state = "running"
+                self._became_running_at = time.time()
                 self.log(f"[WATCHER] Claude actif ({count} process)")
 
         self._last_process_count = count

@@ -1,0 +1,3 @@
+# Permet à l'utilisateur frederic de gérer le service claude-control sans mot de passe
+# Installer : sudo cp sudoers-claude-control /etc/sudoers.d/claude-control
+frederic ALL=(ALL) NOPASSWD: /bin/systemctl start claude-control, /bin/systemctl stop claude-control, /bin/systemctl restart claude-control, /bin/systemctl status claude-control, /bin/systemctl reset-failed claude-control

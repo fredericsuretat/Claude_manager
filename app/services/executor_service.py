@@ -3,6 +3,7 @@ import threading
 import time
 import shutil
 import os
+from app.config import CLAUDE_BIN
 
 
 class ExecutorService:
@@ -23,7 +24,7 @@ class ExecutorService:
 
     def login(self):
         self.log("[AUTH] Launching Claude login flow...")
-        cmd = ["claude", "login"]
+        cmd = [CLAUDE_BIN, "login"]
         terminals = [
             ["gnome-terminal", "--"], ["x-terminal-emulator", "-e"],
             ["konsole", "-e"], ["xfce4-terminal", "-e"], ["xterm", "-e"],
@@ -70,7 +71,7 @@ class ExecutorService:
             return None
 
         self.last_call_ts = now
-        cmd = ["claude"]
+        cmd = [CLAUDE_BIN]
         if skip_permissions:
             cmd.append("--dangerously-skip-permissions")
         if model:

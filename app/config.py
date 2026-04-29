@@ -1,4 +1,20 @@
+import shutil
 from pathlib import Path
+
+# Chemin vers le binaire claude — chercher dans les emplacements connus (nvm, etc.)
+def _find_claude() -> str:
+    candidates = [
+        shutil.which("claude"),
+        "/home/frederic/.nvm/versions/node/v22.22.0/bin/claude",
+        "/usr/local/bin/claude",
+        "/usr/bin/claude",
+    ]
+    for c in candidates:
+        if c and Path(c).is_file():
+            return c
+    return "claude"  # fallback, échouera si absent du PATH
+
+CLAUDE_BIN = _find_claude()
 
 BASE_DIR = Path.home() / ".claude"
 CONFIG_DIR = BASE_DIR / "config"
@@ -29,6 +45,8 @@ MEMORY_FILES = [CLAUDE_MD_FILE, ARCHITECTURE_FILE, STACK_FILE, BUGS_FILE, HABITS
 ANALYTICS_FILES = [CLEANED_HISTORY_FILE, SESSIONS_INDEX_FILE, COMMAND_STATS_FILE, ERROR_STATS_FILE, ADVISOR_REPORT_FILE]
 
 NTFY_TOPIC = "ntfyclaudetasknextmobilesurmonmobilesuretatfrederic"
+
+SCHEDULED_NOTIFS_FILE = RUNTIME_DIR / "scheduled_notifs.json"
 
 
 def ensure_dirs():

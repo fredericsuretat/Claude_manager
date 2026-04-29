@@ -1,0 +1,28 @@
+[Unit]
+Description=Claude Control Web — interface de gestion Claude Code
+Documentation=https://github.com
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=frederic
+Group=frederic
+WorkingDirectory=/home/frederic/Documents/Dev/Claude_manager
+ExecStart=/home/frederic/Documents/Dev/Claude_manager/venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8765
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=claude-control
+
+# Environnement
+Environment=HOME=/home/frederic
+Environment=PATH=/home/frederic/.nvm/versions/node/v22.22.0/bin:/home/frederic/Documents/Dev/Claude_manager/venv/bin:/usr/local/bin:/usr/bin:/bin
+# Ne jamais utiliser la clé API Anthropic
+Environment=ANTHROPIC_API_KEY=
+
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target

@@ -25,8 +25,29 @@ class MobileListenerService:
         if self.running:
             return
         self.running = True
+        self._skip_backlog()
         threading.Thread(target=self._loop, daemon=True).start()
         self.log("[MOBILE] Listener started")
+
+    def _skip_backlog(self):
+        """Advance cursor to latest message so we don't replay the ntfy cache on startup."""
+        try:
+            r = requests.get(self.url, timeout=10)
+            if r.status_code == 200:
+                for line in r.text.strip().split("\n"):
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                        eid = event.get("id")
+                        if eid:
+                            self.last_id = eid
+                    except Exception:
+                        pass
+            if self.last_id:
+                self.log(f"[MOBILE] Backlog skipped, cursor at {self.last_id}")
+        except Exception as e:
+            self.log(f"[MOBILE] Backlog skip failed: {e}")
 
     def stop(self):
         self.running = False
@@ -51,6 +72,10 @@ class MobileListenerService:
                         event_id = event.get("id")
                         if event_id:
                             self.last_id = event_id
+                        # Skip if the notification title looks like one sent by CC itself
+                        title = event.get("title", "")
+                        if any(title.startswith(p) for p in self._SELF_PREFIXES):
+                            continue
                         message = event.get("message", "").strip()
                         if message:
                             self.handle_command(message)
@@ -63,7 +88,21 @@ class MobileListenerService:
 
             time.sleep(5)
 
+    # Messages originating from the CC app itself — ignore as commands
+    _SELF_PREFIXES = (
+        "💤", "🚀", "📊", "🤖", "❌", "✅", "⚠️", "🔐", "🚫", "⏳",
+        "Quota", "Claude a termin", "Claude relancé", "Quota remis",
+        "[SERVER]", "[WATCHER]", "[MOBILE]", "[USAGE]", "[LIVE USAGE]",
+    )
+
     def handle_command(self, msg: str):
+        # Ignore messages that look like outbound notifications (prevents ntfy echo loop)
+        if any(msg.startswith(p) for p in self._SELF_PREFIXES):
+            return
+        # Ignore very short or very long messages that aren't commands
+        if len(msg) < 2 or len(msg) > 500:
+            return
+
         self.log(f"[MOBILE CMD] {msg}")
         if self._on_command_cb:
             try:
@@ -114,4 +153,6 @@ class MobileListenerService:
                 self.mobile.notify("📊 Watcher", str(watcher.get_status()))
             return
 
-        self.mobile.notify("❓ Unknown command", msg)
+        # Don't reflect unknown messages back to ntfy — would create a feedback loop
+        # (app sends notification → listener picks it up → sends "Unknown" → loop)
+        self.log(f"[MOBILE] Commande inconnue ignorée: {msg[:80]}")

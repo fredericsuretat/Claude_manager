@@ -21,6 +21,7 @@ from app.services.token_monitor_service import TokenMonitorService
 from app.services.usage_parse_service import UsageParseService
 from app.services.watcher_service import WatcherService
 from app.services.claude_usage_service import ClaudeUsageService
+from app.services.live_usage_service import LiveUsageService
 from app.services.terminal_service import TerminalService
 
 # ── Init ────────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ listener_svc = MobileListenerService(
 token_svc = TokenMonitorService(logger=sync_logger)
 usage_svc = UsageParseService()
 claude_usage_svc = ClaudeUsageService(mobile_service=mobile_svc, logger=sync_logger)
+live_usage_svc = LiveUsageService(mobile_service=mobile_svc, logger=sync_logger)
 
 # Cross-inject
 executor_svc.watcher = watcher_svc
@@ -108,6 +110,7 @@ async def startup():
         watcher=watcher_svc,
         logger=sync_logger,
         loop=asyncio.get_event_loop(),
+        live_usage=live_usage_svc,
     )
     watcher_svc.start()
     listener_svc.start()
@@ -137,6 +140,7 @@ async def _status_broadcaster():
 
 def _get_status() -> dict:
     usage = claude_usage_svc.get_status()
+    live = live_usage_svc.get_cached()
     return {
         "watcher": watcher_svc.get_status(),
         "executor": executor_svc.get_status(),
@@ -148,6 +152,7 @@ def _get_status() -> dict:
             "reset_at": usage["reset_at"],
             "remaining": usage["remaining_until_reset"],
             "today": usage["today"],
+            "live": live,  # session_pct, week_pct, session_reset_str, week_reset_str
         },
         "server_time": datetime.now().strftime("%H:%M:%S"),
     }
@@ -169,7 +174,9 @@ async def ws_endpoint(ws: WebSocket):
 @app.post("/api/terminal/start")
 def terminal_start(body: dict = {}):
     autonomous = body.get("autonomous", False)
-    return terminal_svc.start(autonomous=autonomous)
+    rows = int(body.get("rows", 40))
+    cols = int(body.get("cols", 220))
+    return terminal_svc.start(autonomous=autonomous, rows=rows, cols=cols)
 
 
 @app.post("/api/terminal/stop")
@@ -192,6 +199,16 @@ def terminal_send(body: dict):
 @app.post("/api/terminal/interrupt")
 def terminal_interrupt():
     return terminal_svc.interrupt()
+
+
+@app.post("/api/terminal/resize")
+def terminal_resize(body: dict):
+    rows = int(body.get("rows", 40))
+    cols = int(body.get("cols", 220))
+    rows = max(5, min(rows, 200))
+    cols = max(20, min(cols, 500))
+    terminal_svc.resize(rows, cols)
+    return {"ok": True, "rows": rows, "cols": cols}
 
 
 @app.get("/api/terminal/status")
@@ -219,6 +236,25 @@ def get_plan():
 @app.get("/api/claude-usage/stats")
 def get_stats():
     return claude_usage_svc.get_recent_stats()
+
+
+@app.get("/api/claude-usage/live")
+def get_live_usage():
+    return live_usage_svc.get_cached()
+
+
+@app.post("/api/claude-usage/live/refresh")
+def refresh_live_usage():
+    """Envoie /usage au terminal actif pour déclencher une capture."""
+    result = terminal_svc.send_line("/usage") if terminal_svc else {"ok": False}
+    cached = live_usage_svc.get_cached()
+    return {"triggered": result.get("ok", False), **cached}
+
+
+@app.get("/api/claude-usage/live/debug")
+def debug_live_usage():
+    """Retourne le buffer PTY brut (debug parser)."""
+    return {"buf": live_usage_svc.get_debug_buf()}
 
 
 # ── REST: Watcher ────────────────────────────────────────────────
@@ -377,6 +413,146 @@ def get_tokens():
 def parse_tokens(body: dict):
     text = body.get("text", "")
     return usage_svc.parse(text)
+
+
+# ── REST: Scheduled notifications ─────────────────────────────────
+import threading as _threading
+import json as _json
+from app.config import SCHEDULED_NOTIFS_FILE
+
+_sched_lock = _threading.Lock()
+
+
+def _load_scheduled() -> list:
+    try:
+        if SCHEDULED_NOTIFS_FILE.exists():
+            return _json.loads(SCHEDULED_NOTIFS_FILE.read_text())
+    except Exception:
+        pass
+    return []
+
+
+def _save_scheduled(notifs: list):
+    try:
+        SCHEDULED_NOTIFS_FILE.write_text(_json.dumps(notifs, ensure_ascii=False, indent=2))
+    except Exception as e:
+        sync_logger(f"[NOTIF] Save failed: {e}")
+
+
+_scheduled_notifs: list[dict] = _load_scheduled()
+
+
+def _run_scheduler():
+    while True:
+        _threading.Event().wait(30)
+        now = datetime.now()
+        with _sched_lock:
+            fired = []
+            for n in _scheduled_notifs:
+                try:
+                    target = datetime.fromisoformat(n["at"])
+                    if now >= target:
+                        mobile_svc.notify(n.get("title", "CC"), n.get("message", ""), n.get("priority", 3))
+                        sync_logger(f"[NOTIF] Notification planifiée envoyée: {n.get('title')}")
+                        fired.append(n)
+                except Exception:
+                    fired.append(n)
+            for n in fired:
+                _scheduled_notifs.remove(n)
+            if fired:
+                _save_scheduled(_scheduled_notifs)
+
+
+_threading.Thread(target=_run_scheduler, daemon=True).start()
+
+
+@app.get("/api/notifications/scheduled")
+def get_scheduled():
+    with _sched_lock:
+        return {"notifications": list(_scheduled_notifs)}
+
+
+@app.post("/api/notifications/schedule")
+def schedule_notification(body: dict):
+    title = body.get("title", "CC")
+    message = body.get("message", "")
+    at = body.get("at", "")
+    priority = body.get("priority", 3)
+    if not at or not message:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "at et message requis"}, status_code=400)
+    try:
+        datetime.fromisoformat(at)
+    except ValueError:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "format at invalide (ISO 8601)"}, status_code=400)
+    entry = {"title": title, "message": message, "at": at, "priority": priority}
+    with _sched_lock:
+        _scheduled_notifs.append(entry)
+        _save_scheduled(_scheduled_notifs)
+    sync_logger(f"[NOTIF] Planifiée pour {at}: {title}")
+    return {"ok": True, "scheduled": entry}
+
+
+@app.delete("/api/notifications/scheduled/{idx}")
+def delete_scheduled(idx: int):
+    with _sched_lock:
+        if 0 <= idx < len(_scheduled_notifs):
+            removed = _scheduled_notifs.pop(idx)
+            _save_scheduled(_scheduled_notifs)
+            return {"ok": True, "removed": removed}
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"error": "Index invalide"}, status_code=404)
+
+
+# ── REST: Service self-management ─────────────────────────────────
+import subprocess as _subprocess
+
+SERVICE_NAME = "claude-control"
+
+
+@app.get("/api/service/status")
+def service_status():
+    try:
+        r = _subprocess.run(
+            ["sudo", "-n", "/usr/bin/systemctl", "status", SERVICE_NAME, "--no-pager"],
+            capture_output=True, text=True, timeout=5,
+        )
+        active = "Active: active" in r.stdout
+        lines = [l for l in r.stdout.splitlines() if l.strip()]
+        return {"active": active, "lines": lines[-15:], "returncode": r.returncode}
+    except Exception as e:
+        return {"active": False, "lines": [str(e)], "returncode": -1}
+
+
+@app.post("/api/service/restart")
+def service_restart():
+    try:
+        _subprocess.run(
+            ["sudo", "-n", "/usr/bin/systemctl", "reset-failed", SERVICE_NAME],
+            capture_output=True, timeout=5,
+        )
+        r = _subprocess.run(
+            ["sudo", "-n", "/usr/bin/systemctl", "restart", SERVICE_NAME],
+            capture_output=True, text=True, timeout=15,
+        )
+        sync_logger(f"[SERVICE] restart → code {r.returncode}")
+        return {"ok": r.returncode == 0, "stderr": r.stderr.strip()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/service/logs")
+def service_logs():
+    try:
+        r = _subprocess.run(
+            ["sudo", "-n", "/usr/bin/journalctl", "-u", SERVICE_NAME,
+             "-n", "100", "--no-pager", "--output=short"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return {"lines": r.stdout.splitlines()}
+    except Exception as e:
+        return {"lines": [str(e)]}
 
 
 # ── Static files ───────────────────────────────────────────────────

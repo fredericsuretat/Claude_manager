@@ -10,15 +10,15 @@ Principe :
 
 import os
 import re
-import shutil
 import threading
 import time
 from datetime import datetime
 from typing import Callable, Optional
 
 import ptyprocess
+from app.config import CLAUDE_BIN
 
-CLAUDE_BIN = shutil.which("claude") or "claude"
+
 
 RATE_LIMIT_RE = re.compile(
     r"(you.ve hit your limit|hit your limit|usage limit|rate limit)",
@@ -37,6 +37,8 @@ class TerminalSession:
         on_state: Callable[[str, Optional[datetime]], None],
         logger: Callable[[str], None],
         autonomous: bool = False,
+        rows: int = 40,
+        cols: int = 220,
     ):
         self._proc: Optional[ptyprocess.PtyProcess] = None
         self._reader_thread: Optional[threading.Thread] = None
@@ -44,6 +46,8 @@ class TerminalSession:
         self._on_state = on_state  # (state: str, reset_at: datetime|None)
         self._logger = logger
         self._autonomous = autonomous
+        self._rows = rows
+        self._cols = cols
 
         self.state = "idle"          # idle | running | waiting | rate_limited | dead
         self.started_at: Optional[datetime] = None
@@ -64,7 +68,7 @@ class TerminalSession:
         env.pop("ANTHROPIC_API_KEY", None)  # never use API key
 
         self._proc = ptyprocess.PtyProcess.spawn(
-            cmd, dimensions=(40, 220), env=env
+            cmd, dimensions=(self._rows, self._cols), env=env
         )
         self.started_at = datetime.now()
         self.state = "running"
@@ -98,12 +102,22 @@ class TerminalSession:
             self._logger(f"[TERMINAL] Write error: {e}")
 
     def send_line(self, text: str):
-        """Envoie une ligne + Enter."""
-        self.write(text + "\n")
+        """Envoie une ligne + Enter (carriage return, comme xterm.js)."""
+        self.write(text + "\r")
 
     def send_interrupt(self):
         """Ctrl+C."""
         self.write("\x03")
+
+    def resize(self, rows: int, cols: int):
+        """Redimensionne le PTY pour correspondre au terminal du navigateur."""
+        self._rows = rows
+        self._cols = cols
+        if self._proc and self._proc.isalive():
+            try:
+                self._proc.setwinsize(rows, cols)
+            except Exception:
+                pass
 
     # ── Reader loop ───────────────────────────────────────────────
     def _read_loop(self):
@@ -174,16 +188,23 @@ class TerminalSession:
 class TerminalService:
     """Gestionnaire de session PTY — une session active à la fois."""
 
-    def __init__(self, ws_manager, watcher=None, logger=None, loop=None):
+    def __init__(self, ws_manager, watcher=None, logger=None, loop=None, live_usage=None):
         self._ws = ws_manager
         self._watcher = watcher
         self._logger = logger or print
         self._loop = loop  # event loop FastAPI, stocké à la création
         self._session: Optional[TerminalSession] = None
+        self._live_usage = live_usage  # LiveUsageService — alimenté par le flux PTY
 
     def _broadcast_output(self, data: str):
         """Envoie le flux PTY à tous les clients WebSocket (thread → async)."""
         import asyncio, json
+        # Alimenter le live usage parser avec le flux brut
+        if self._live_usage:
+            try:
+                self._live_usage.feed(data)
+            except Exception:
+                pass
         msg = json.dumps({"type": "terminal_output", "data": data})
         loop = self._loop
         if loop is None:
@@ -220,7 +241,19 @@ class TerminalService:
             if claude_usage:
                 claude_usage.on_rate_limited(reset_dt)
 
-    def start(self, autonomous: bool = False):
+    def _auto_usage(self):
+        """Envoie /usage 8s après démarrage, puis Escape pour fermer le modal."""
+        import time
+        time.sleep(8)
+        if self._session and self._session.is_alive():
+            self._session.send_line("/usage")
+            self._logger("[TERMINAL] Auto /usage envoyé")
+            time.sleep(3)  # laisser le temps au modal de s'afficher
+            if self._session and self._session.is_alive():
+                self._session.write("\x1b")  # ESC pour fermer le modal /usage
+                self._logger("[TERMINAL] Auto ESC envoyé (fermeture /usage)")
+
+    def start(self, autonomous: bool = False, rows: int = 40, cols: int = 220):
         if self._session and self._session.is_alive():
             self._logger("[TERMINAL] Session déjà active")
             return {"ok": False, "error": "Session already running"}
@@ -230,9 +263,17 @@ class TerminalService:
             on_state=self._on_state_change,
             logger=self._logger,
             autonomous=autonomous,
+            rows=rows,
+            cols=cols,
         )
         self._session.start()
+        # Auto-send /usage after Claude boots to populate the usage bar
+        threading.Thread(target=self._auto_usage, daemon=True).start()
         return {"ok": True, "pid": self._session._proc.pid if self._session._proc else None}
+
+    def resize(self, rows: int, cols: int):
+        if self._session:
+            self._session.resize(rows, cols)
 
     def stop(self):
         if self._session:
