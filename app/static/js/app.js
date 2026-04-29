@@ -100,6 +100,9 @@ function applyStatus(data) {
     if (topicEl) topicEl.textContent = li.topic || '';
   }
 
+  // ── Usage bar (header) ──────────────────────────────────────────
+  updateUsageBar(data.claude_usage || {});
+
   // Claude usage mini-dashboard card
   const cu = data.claude_usage || {};
   setEl('d-plan-type', (cu.subscription || '—').toUpperCase());
@@ -113,6 +116,37 @@ function applyStatus(data) {
     } else {
       usageStatusEl.textContent = 'Quota disponible';
     }
+  }
+}
+
+// ── Usage bar (header) ───────────────────────────────────────────
+// Pro plan: ~45 msgs / 5h window (limite approximative connue)
+const CLAUDE_PRO_LIMIT = 45;
+
+function updateUsageBar(cu) {
+  const label   = document.getElementById('usage-bar-label');
+  const fill    = document.getElementById('usage-bar-fill');
+  const right   = document.getElementById('usage-bar-right');
+  if (!label || !fill || !right) return;
+
+  const msgs = (cu.today || {}).messageCount || 0;
+
+  if (cu.rate_limited) {
+    label.textContent = '🚫 Rate limit';
+    label.className = 'text-red-400 shrink-0 w-28 font-semibold';
+    fill.style.width = '100%';
+    fill.className = 'h-full rounded-full bg-red-500 transition-all duration-500';
+    right.textContent = cu.reset_at ? `Reset ${cu.reset_at}` : '';
+    right.className = 'text-red-400 shrink-0 text-right min-w-24';
+  } else {
+    const pct = Math.min(Math.round((msgs / CLAUDE_PRO_LIMIT) * 100), 100);
+    const color = pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-green-500';
+    label.textContent = `${msgs} msg aujourd'hui`;
+    label.className = 'text-gray-400 shrink-0 w-28';
+    fill.style.width = `${pct}%`;
+    fill.className = `h-full rounded-full ${color} transition-all duration-500`;
+    right.textContent = `≈${pct}%`;
+    right.className = 'text-gray-500 shrink-0 text-right min-w-24';
   }
 }
 

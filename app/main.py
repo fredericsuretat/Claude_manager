@@ -107,6 +107,7 @@ async def startup():
         ws_manager=ws_manager,
         watcher=watcher_svc,
         logger=sync_logger,
+        loop=asyncio.get_event_loop(),
     )
     watcher_svc.start()
     listener_svc.start()

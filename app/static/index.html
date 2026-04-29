@@ -14,15 +14,25 @@
 <body class="bg-gray-950 text-gray-100 min-h-screen flex flex-col">
 
   <!-- Top bar -->
-  <header class="bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center justify-between sticky top-0 z-50">
-    <div class="flex items-center gap-3">
-      <span class="text-lg font-bold tracking-tight text-white">⚡ Claude Control</span>
-      <span id="claude-state-badge" class="px-2 py-0.5 rounded text-xs font-semibold bg-gray-700 text-gray-300">—</span>
+  <header class="bg-gray-900 border-b border-gray-800 sticky top-0 z-50">
+    <div class="px-4 py-2 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <span class="text-lg font-bold tracking-tight text-white">⚡ Claude Control</span>
+        <span id="claude-state-badge" class="px-2 py-0.5 rounded text-xs font-semibold bg-gray-700 text-gray-300">—</span>
+      </div>
+      <div class="flex items-center gap-4 text-sm text-gray-400">
+        <span id="token-summary" class="hidden sm:block"></span>
+        <span id="server-time" class="font-mono text-xs"></span>
+        <span id="ws-status" class="w-2 h-2 rounded-full bg-red-500 inline-block" title="WebSocket"></span>
+      </div>
     </div>
-    <div class="flex items-center gap-4 text-sm text-gray-400">
-      <span id="token-summary" class="hidden sm:block"></span>
-      <span id="server-time" class="font-mono text-xs"></span>
-      <span id="ws-status" class="w-2 h-2 rounded-full bg-red-500 inline-block" title="WebSocket"></span>
+    <!-- Usage bar -->
+    <div id="usage-bar-wrap" class="px-4 pb-2 flex items-center gap-3 text-xs">
+      <span id="usage-bar-label" class="text-gray-500 shrink-0 w-28">Chargement…</span>
+      <div class="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+        <div id="usage-bar-fill" class="h-full rounded-full bg-green-500 transition-all duration-500" style="width:0%"></div>
+      </div>
+      <span id="usage-bar-right" class="text-gray-500 shrink-0 text-right min-w-24"></span>
     </div>
   </header>
 

@@ -174,20 +174,25 @@ class TerminalSession:
 class TerminalService:
     """Gestionnaire de session PTY — une session active à la fois."""
 
-    def __init__(self, ws_manager, watcher=None, logger=None):
+    def __init__(self, ws_manager, watcher=None, logger=None, loop=None):
         self._ws = ws_manager
         self._watcher = watcher
         self._logger = logger or print
+        self._loop = loop  # event loop FastAPI, stocké à la création
         self._session: Optional[TerminalSession] = None
 
     def _broadcast_output(self, data: str):
-        """Envoie le flux PTY à tous les clients WebSocket."""
+        """Envoie le flux PTY à tous les clients WebSocket (thread → async)."""
         import asyncio, json
         msg = json.dumps({"type": "terminal_output", "data": data})
+        loop = self._loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(self._ws.broadcast_raw(msg), loop)
+            asyncio.run_coroutine_threadsafe(self._ws.broadcast_raw(msg), loop)
         except Exception:
             pass
 
@@ -195,10 +200,14 @@ class TerminalService:
         import asyncio, json
         msg = json.dumps({"type": "terminal_state", "state": state,
                           "reset_at": reset_dt.strftime("%d/%m %H:%M") if reset_dt else None})
+        loop = self._loop
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(self._ws.broadcast_raw(msg), loop)
+            asyncio.run_coroutine_threadsafe(self._ws.broadcast_raw(msg), loop)
         except Exception:
             pass
 
