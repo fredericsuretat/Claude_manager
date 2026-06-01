@@ -1,6 +1,5 @@
 // ── State ────────────────────────────────────────────────────────
 let ws = null;
-let currentMemKey = 'claude_md';
 let tokenData = null;
 let term = null;
 let fitAddon = null;
@@ -40,7 +39,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     document.getElementById(`tab-${btn.dataset.tab}`).classList.remove('hidden');
     // Auto-load on tab switch
     if (btn.dataset.tab === 'tokens') refreshTokens();
-    if (btn.dataset.tab === 'memory') loadMemory(currentMemKey);
+    if (btn.dataset.tab === 'memory') memexInit();
     if (btn.dataset.tab === 'mobile') { refreshCommands(); refreshScheduled(); }
     if (btn.dataset.tab === 'usage') refreshUsage();
     if (btn.dataset.tab === 'terminal') termInit();
@@ -441,31 +440,566 @@ async function runClaude() {
   document.getElementById('exec-spinner').classList.add('hidden');
 }
 
-// ── Memory ────────────────────────────────────────────────────────
-async function loadMemory(key) {
-  currentMemKey = key;
-  document.querySelectorAll('.memory-btn').forEach(b => b.classList.remove('active-mem'));
-  const btn = document.getElementById(`mem-btn-${key}`);
-  if (btn) btn.classList.add('active-mem');
-  try {
-    const data = await api('GET', `/api/memory/${key}`);
-    document.getElementById('mem-editor').value = data.content || '';
-    document.getElementById('mem-current-name').textContent = data.path.split('/').pop();
-    document.getElementById('mem-meta').textContent = `${data.content.length} caractères · ${data.path}`;
-  } catch (e) {
-    document.getElementById('mem-editor').value = `Erreur: ${e.message}`;
+// ── Memory Control Center ─────────────────────────────────────────
+const memex = {
+  tree: null,                  // dernière réponse /tree
+  currentRoot: null,
+  currentRel: null,
+  currentMtime: null,
+  dirty: false,
+  collapsed: new Set(),        // root ids repliés
+  graph: null,                 // instance vis Network
+  graphLoaded: false,
+  initialized: false,
+};
+
+async function memexInit() {
+  if (!memex.initialized) {
+    memex.initialized = true;
+    await memexRefreshAll();
+    memexRefreshLiveStats();
+    // refresh live stats toutes les 5s tant que l'onglet est ouvert
+    setInterval(() => {
+      if (!document.getElementById('tab-memory').classList.contains('hidden')) {
+        memexRefreshLiveStats();
+      }
+    }, 5000);
   }
 }
 
-async function saveMemory() {
-  const content = document.getElementById('mem-editor').value;
+async function memexRefreshLiveStats() {
   try {
-    const result = await api('PUT', `/api/memory/${currentMemKey}`, { content });
-    document.getElementById('mem-meta').textContent = `✅ Sauvegardé — ${result.size} caractères`;
+    const d = await api('GET', '/api/memory-explorer/stats-live');
+    document.getElementById('memex-live-saved').textContent =
+      d.tokens_saved.toLocaleString('fr-FR');
+    document.getElementById('memex-live-calls').textContent = d.total_calls;
+    const parts = Object.entries(d.calls || {}).map(([k, v]) => `${k}:${v}`).join(' · ');
+    document.getElementById('memex-live-breakdown').textContent = parts || '(aucun appel)';
+  } catch (e) {}
+}
+
+async function memexResetStats() {
+  if (!confirm('Reset les compteurs ?')) return;
+  await api('POST', '/api/memory-explorer/stats-live/reset');
+  memexRefreshLiveStats();
+}
+
+async function memexRefreshAll() {
+  try {
+    await api('POST', '/api/memory-explorer/refresh');
+  } catch (e) {}
+  await memexLoadTree();
+  memexLoadStats();
+}
+
+async function memexLoadStats() {
+  try {
+    const s = await api('GET', '/api/memory-explorer/stats');
+    document.getElementById('memex-stats').textContent =
+      `${s.total_files} fichiers · ${s.roots_count} sources · ${(s.total_size/1024).toFixed(1)} KiB`;
+  } catch (e) {
+    document.getElementById('memex-stats').textContent = '—';
+  }
+}
+
+async function memexLoadTree() {
+  try {
+    memex.tree = await api('GET', '/api/memory-explorer/tree');
+    memexRenderTree();
+  } catch (e) {
+    document.getElementById('memex-tree').innerHTML =
+      `<div class="text-red-400 text-sm p-2">Erreur: ${e.message}</div>`;
+  }
+}
+
+function memexRenderTree() {
+  const filter = (document.getElementById('memex-tree-filter')?.value || '').toLowerCase();
+  const data = memex.tree;
+  const el = document.getElementById('memex-tree');
+  if (!data || !data.roots) { el.textContent = 'Aucune donnée'; return; }
+  const parts = [];
+  for (const root of data.roots) {
+    const matchedFiles = filter
+      ? root.files.filter(f =>
+          f.rel.toLowerCase().includes(filter) ||
+          root.label.toLowerCase().includes(filter))
+      : root.files;
+    if (filter && matchedFiles.length === 0) continue;
+    const collapsed = memex.collapsed.has(root.id);
+    parts.push(`<div class="memex-root ${collapsed ? 'collapsed' : ''}" data-root="${root.id}">`);
+    parts.push(`<div class="memex-root-header" onclick="memexToggleRoot('${escapeAttr(root.id)}')">
+        <span>${collapsed ? '▸' : '▾'} ${escapeHtml(root.label)}</span>
+        <span class="memex-root-count">${matchedFiles.length}</span>
+      </div>`);
+    parts.push('<div class="memex-root-files">');
+    for (const f of matchedFiles) {
+      const active = (memex.currentRoot === root.id && memex.currentRel === f.rel) ? 'active' : '';
+      const idx = f.is_index ? 'is-index' : '';
+      const dt = new Date(f.mtime * 1000);
+      const dateStr = `${dt.getMonth()+1}/${dt.getDate()}`;
+      parts.push(`<div class="memex-file ${active} ${idx}"
+            onclick="memexOpenFile('${escapeAttr(root.id)}', '${escapeAttr(f.rel)}')"
+            title="${escapeAttr(f.rel)}">
+          <span class="memex-file-name">${escapeHtml(f.rel)}</span>
+          <span class="memex-file-meta">${(f.size/1024).toFixed(1)}K · ${dateStr}</span>
+        </div>`);
+    }
+    parts.push('</div></div>');
+  }
+  el.innerHTML = parts.join('') || '<div class="text-gray-500 p-4 text-center">Rien à afficher</div>';
+}
+
+function memexToggleRoot(rootId) {
+  if (memex.collapsed.has(rootId)) memex.collapsed.delete(rootId);
+  else memex.collapsed.add(rootId);
+  memexRenderTree();
+}
+
+async function memexOpenFile(rootId, rel) {
+  if (memex.dirty && !confirm('Modifications non sauvegardées. Continuer ?')) return;
+  memexCloseOverlay();
+  try {
+    const data = await api('GET',
+      `/api/memory-explorer/file?root=${encodeURIComponent(rootId)}&rel=${encodeURIComponent(rel)}`);
+    if (data.error) { alert(`Erreur: ${data.error}`); return; }
+    memex.currentRoot = rootId;
+    memex.currentRel = rel;
+    memex.currentMtime = data.mtime;
+    memex.dirty = false;
+    const ed = document.getElementById('memex-editor');
+    ed.value = data.content || '';
+    ed.disabled = false;
+    document.getElementById('memex-current-name').textContent = data.name;
+    document.getElementById('memex-current-path').textContent = data.path;
+    document.getElementById('memex-current-meta').textContent =
+      `${data.content.length} car. · ${(data.size/1024).toFixed(1)} KiB`;
+    document.getElementById('memex-save-btn').disabled = false;
+    document.getElementById('memex-del-btn').disabled = false;
+    document.getElementById('memex-skim-btn').disabled = false;
+    document.getElementById('memex-idx-btn').classList.toggle('hidden',
+      !(data.name === 'MEMORY.md' || data.name === 'CLAUDE.md'));
+    document.getElementById('memex-editor-status').textContent = '';
+    // Charge le skim en arrière-plan pour récupérer les headings (TOC)
+    api('GET', `/api/memory-explorer/skim?root=${encodeURIComponent(rootId)}&rel=${encodeURIComponent(rel)}`)
+      .then(s => memexRenderTOC(s.headings || []))
+      .catch(() => memexRenderTOC([]));
+    memexRenderTree();
+  } catch (e) {
+    alert(`Erreur: ${e.message}`);
+  }
+}
+
+async function memexSaveFile() {
+  if (!memex.currentRoot || !memex.currentRel) return;
+  const content = document.getElementById('memex-editor').value;
+  try {
+    const r = await api('PUT', '/api/memory-explorer/file', {
+      root: memex.currentRoot, rel: memex.currentRel, content,
+    });
+    memex.currentMtime = r.mtime;
+    memex.dirty = false;
+    document.getElementById('memex-editor-status').textContent =
+      `✅ Sauvegardé (${r.size} octets) à ${new Date().toLocaleTimeString()}`;
+    document.getElementById('memex-current-meta').textContent =
+      `${content.length} car. · ${(r.size/1024).toFixed(1)} KiB`;
+    memexLoadTree();
   } catch (e) {
     alert(`Erreur sauvegarde: ${e.message}`);
   }
 }
+
+async function memexDeleteFile() {
+  if (!memex.currentRoot || !memex.currentRel) return;
+  if (!confirm(`Supprimer ${memex.currentRel} ?`)) return;
+  try {
+    const r = await api('DELETE',
+      `/api/memory-explorer/file?root=${encodeURIComponent(memex.currentRoot)}&rel=${encodeURIComponent(memex.currentRel)}`);
+    if (r.ok) {
+      memex.currentRoot = null;
+      memex.currentRel = null;
+      memex.dirty = false;
+      const ed = document.getElementById('memex-editor');
+      ed.value = '';
+      ed.disabled = true;
+      document.getElementById('memex-current-name').textContent = 'Aucun fichier sélectionné';
+      document.getElementById('memex-current-path').textContent = '';
+      document.getElementById('memex-current-meta').textContent = '';
+      document.getElementById('memex-save-btn').disabled = true;
+      document.getElementById('memex-del-btn').disabled = true;
+      memexLoadTree();
+    } else {
+      alert(`Erreur: ${r.error}`);
+    }
+  } catch (e) {
+    alert(`Erreur: ${e.message}`);
+  }
+}
+
+async function memexNewFile() {
+  if (!memex.tree || !memex.tree.roots.length) return;
+  // root selector
+  const labels = memex.tree.roots.map((r, i) => `${i}: ${r.label}`).join('\n');
+  const idxStr = prompt(`Choisis un root (numéro):\n${labels}`, '0');
+  if (idxStr === null) return;
+  const idx = parseInt(idxStr, 10);
+  if (isNaN(idx) || idx < 0 || idx >= memex.tree.roots.length) return;
+  const root = memex.tree.roots[idx];
+  const name = prompt('Nom du fichier (ex: notes.md ou docs/sub.md):', 'note.md');
+  if (!name || !name.endsWith('.md')) return;
+  try {
+    const r = await api('POST', '/api/memory-explorer/file', {
+      root: root.id, rel: name, content: `# ${name.replace(/\.md$/, '')}\n\n`,
+    });
+    if (r.ok) {
+      await memexLoadTree();
+      await memexOpenFile(root.id, name);
+    } else {
+      alert(`Erreur: ${r.error}`);
+    }
+  } catch (e) {
+    alert(`Erreur: ${e.message}`);
+  }
+}
+
+function memexCopyPath() {
+  const p = document.getElementById('memex-current-path').textContent;
+  if (!p) return;
+  navigator.clipboard?.writeText(p);
+  document.getElementById('memex-editor-status').textContent = `📋 ${p}`;
+}
+
+// Sub-tab switching
+function memexShowView(view) {
+  document.querySelectorAll('.memex-subtab').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  document.querySelectorAll('.memex-view').forEach(v => v.classList.add('hidden'));
+  document.getElementById(`memex-view-${view}`).classList.remove('hidden');
+  if (view === 'recent') memexLoadRecent();
+  if (view === 'graph') memexBuildGraph();
+  if (view === 'roadmap') memexLoadRoadmap();
+}
+
+// ── Roadmap panel ─────────────────────────────────────────────────
+async function memexLoadRoadmap() {
+  const box = document.getElementById('memex-roadmap');
+  try {
+    const data = await api('GET', '/api/memory-explorer/roadmap');
+    box.innerHTML = data.items.map((it, i) => `
+      <div class="memex-roadmap-card status-${it.status}" id="rm-card-${it.id}">
+        <div class="memex-roadmap-title">
+          <span>${escapeHtml(it.title)}</span>
+          <span class="memex-roadmap-badge ${it.status}">${it.status}</span>
+        </div>
+        <div class="memex-roadmap-endpoint">${escapeHtml(it.endpoint)}</div>
+        <div class="memex-roadmap-row"><span class="lab">Pourquoi:</span> ${escapeHtml(it.why)}</div>
+        <div class="memex-roadmap-row"><span class="lab">Renvoie:</span> ${escapeHtml(it.returns)}</div>
+        <div class="memex-roadmap-row"><span class="lab">Économie:</span> <strong class="text-green-400">${escapeHtml(it.savings)}</strong></div>
+        <button class="memex-roadmap-test" onclick="memexTestRoadmap('${escapeAttr(it.id)}')">▶ Tester live</button>
+        <div class="memex-roadmap-output hidden" id="rm-out-${escapeAttr(it.id)}"></div>
+      </div>
+    `).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="text-red-400 p-2">Erreur: ${e.message}</div>`;
+  }
+}
+
+async function memexTestRoadmap(id) {
+  const out = document.getElementById(`rm-out-${id}`);
+  out.classList.remove('hidden');
+  out.textContent = '⏳…';
+  // Choisit un fichier de démo selon le test
+  const demoRoot = 'claude:proj:-home-frederic-Documents-Docker';
+  const demoRel = 'MEMORY.md';
+  try {
+    let url, label;
+    if (id === 'skim') {
+      url = `/api/memory-explorer/skim?root=${encodeURIComponent(demoRoot)}&rel=${encodeURIComponent('project_x402_lab.md')}`;
+      label = 'skim(project_x402_lab.md)';
+    } else if (id === 'search-meta') {
+      url = `/api/memory-explorer/search-meta?q=Docker&limit=5`;
+      label = "search-meta('Docker')";
+    } else if (id === 'index') {
+      url = `/api/memory-explorer/index?root=${encodeURIComponent(demoRoot)}&name=${encodeURIComponent('MEMORY.md')}`;
+      label = 'index(MEMORY.md)';
+    } else if (id === 'section') {
+      url = `/api/memory-explorer/section?root=${encodeURIComponent(demoRoot)}&rel=${encodeURIComponent('project_x402_lab.md')}&heading=${encodeURIComponent('Infrastructure')}`;
+      label = "section(project_x402_lab, 'Infrastructure')";
+    } else if (id === 'search-headings') {
+      url = `/api/memory-explorer/search-headings?q=traefik`;
+      label = "search-headings('traefik')";
+    } else {
+      out.textContent = 'Test non défini';
+      return;
+    }
+    const data = await api('GET', url);
+    out.textContent = `→ ${label}\n` + JSON.stringify(data, null, 2);
+  } catch (e) {
+    out.textContent = `Erreur: ${e.message}`;
+  }
+}
+
+// ── Skim (peek) ───────────────────────────────────────────────────
+function memexShowOverlay(title, body) {
+  document.getElementById('memex-overlay-title').textContent = title;
+  document.getElementById('memex-overlay-body').textContent = body;
+  document.getElementById('memex-overlay').classList.remove('hidden');
+}
+function memexCloseOverlay() {
+  document.getElementById('memex-overlay').classList.add('hidden');
+}
+
+async function memexSkimCurrent() {
+  if (!memex.currentRoot || !memex.currentRel) return;
+  try {
+    const data = await api('GET',
+      `/api/memory-explorer/skim?root=${encodeURIComponent(memex.currentRoot)}&rel=${encodeURIComponent(memex.currentRel)}`);
+    const fm = Object.entries(data.frontmatter || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+    const heads = (data.headings || []).map(h => `${'  '.repeat(h.level-1)}${'#'.repeat(h.level)} ${h.title}`).join('\n');
+    const ratio = (data.approx_tokens_full/Math.max(data.approx_tokens_skim,1)).toFixed(1);
+    const body = [
+      `📄 ${data.name} — ${data.total_lines} lignes, ${(data.size/1024).toFixed(1)} KiB`,
+      `💎 Économie: skim ~${data.approx_tokens_skim} tok vs full ~${data.approx_tokens_full} tok (×${ratio})`,
+      '',
+      '── Frontmatter ──',
+      fm || '(aucune)',
+      '',
+      `── Headings (${(data.headings || []).length}) ──`,
+      heads || '(aucun)',
+      '',
+      '── Preview ──',
+      data.preview || '(vide)',
+    ].join('\n');
+    memexShowOverlay(`👁 Skim · ${data.name}`, body);
+    document.getElementById('memex-editor-status').textContent =
+      `💎 Skim (×${ratio} économie)`;
+    memexRefreshLiveStats();
+  } catch (e) {
+    memexShowOverlay('Erreur skim', e.message);
+  }
+}
+
+// ── TOC / sections ────────────────────────────────────────────────
+function memexRenderTOC(headings) {
+  const tocEl = document.getElementById('memex-toc');
+  const listEl = document.getElementById('memex-toc-list');
+  if (!headings || headings.length <= 1) {
+    tocEl.classList.add('hidden');
+    return;
+  }
+  tocEl.classList.remove('hidden');
+  listEl.innerHTML = headings.map(h =>
+    `<button class="memex-toc-item level-${h.level}" onclick="memexLoadSection('${escapeAttr(h.title)}')">${escapeHtml(h.title)}</button>`
+  ).join('');
+}
+
+async function memexLoadSection(heading) {
+  if (!memex.currentRoot || !memex.currentRel) return;
+  try {
+    const data = await api('GET',
+      `/api/memory-explorer/section?root=${encodeURIComponent(memex.currentRoot)}&rel=${encodeURIComponent(memex.currentRel)}&heading=${encodeURIComponent(heading)}`);
+    if (data.error) {
+      memexShowOverlay('Section introuvable', `"${heading}" pas trouvée.\n\nDisponibles:\n${(data.available||[]).map(h => '· '+h).join('\n')}`);
+      return;
+    }
+    document.getElementById('memex-editor').value = data.content;
+    const ratio = (data.approx_tokens_full_file / Math.max(data.approx_tokens, 1)).toFixed(1);
+    document.getElementById('memex-editor-status').textContent =
+      `📑 "${data.heading}" — ~${data.approx_tokens} tok (×${ratio} économie)`;
+    memexRefreshLiveStats();
+  } catch (e) {
+    memexShowOverlay('Erreur section', e.message);
+  }
+}
+
+// ── Index view (MEMORY.md) ────────────────────────────────────────
+async function memexShowIndex() {
+  if (!memex.currentRoot) return;
+  try {
+    const data = await api('GET',
+      `/api/memory-explorer/index?root=${encodeURIComponent(memex.currentRoot)}&name=${encodeURIComponent(memex.currentRel || 'MEMORY.md')}`);
+    if (data.error) { memexShowOverlay('Index', data.error); return; }
+    const lines = [
+      `# Index ${data.index_file} — ${data.count} entrées`,
+      data.missing.length ? `⚠ ${data.missing.length} liens cassés: ${data.missing.join(', ')}` : '✅ Tous les liens valides',
+      data.orphans.length ? `📎 ${data.orphans.length} fichiers orphelins: ${data.orphans.join(', ')}` : '✅ Aucun orphelin',
+      '',
+      ...data.entries.map(e => `${e.exists ? '✓' : '✗'} [${e.title}](${e.file}) — ${e.hook}`),
+    ];
+    memexShowOverlay(`📚 Index · ${data.index_file}`, lines.join('\n'));
+    memexRefreshLiveStats();
+  } catch (e) {
+    memexShowOverlay('Erreur index', e.message);
+  }
+}
+
+// Search — mode = 'full' | 'meta' | 'headings'
+async function memexRunSearch(mode = 'full') {
+  const q = document.getElementById('memex-search-q').value.trim();
+  const box = document.getElementById('memex-search-results');
+  if (!q) { box.innerHTML = '<div class="text-gray-500 px-2 py-4 text-center">Tape une requête</div>'; return; }
+  box.innerHTML = '<div class="text-amber-400 px-2 py-4 text-center">⏳…</div>';
+  const url = ({
+    full:     `/api/memory-explorer/search?q=${encodeURIComponent(q)}`,
+    meta:     `/api/memory-explorer/search-meta?q=${encodeURIComponent(q)}`,
+    headings: `/api/memory-explorer/search-headings?q=${encodeURIComponent(q)}`,
+  })[mode];
+  const modeLabel = ({full: '🔍 full-text', meta: '📋 meta-only', headings: '🏷 headings'})[mode];
+  try {
+    const data = await api('GET', url);
+    if (!data.results.length) {
+      box.innerHTML = `<div class="text-gray-500 px-2 py-4 text-center">Aucun résultat (${modeLabel})</div>`;
+      return;
+    }
+    const head = `<div class="text-xs text-gray-500 px-2 py-1">${data.count} résultats · ${modeLabel} · "${escapeHtml(q)}"</div>`;
+    const items = data.results.map(r => {
+      const isHeading = mode === 'headings';
+      const snippet = mode === 'full'
+        ? `<div class="memex-result-snippet">${highlightSnippet(r.snippet, q)}</div>`
+        : '';
+      const line = isHeading
+        ? `<span class="text-amber-300">${'#'.repeat(r.level)} ${escapeHtml(r.heading)}</span>`
+        : `<span class="text-gray-600">L${r.line} · ×${r.count}</span>`;
+      const clickRel = isHeading
+        ? `memexOpenFileAtHeading('${escapeAttr(r.root)}', '${escapeAttr(r.rel)}', '${escapeAttr(r.heading)}')`
+        : `memexOpenFile('${escapeAttr(r.root)}', '${escapeAttr(r.rel)}')`;
+      return `<div class="memex-result" onclick="${clickRel}">
+        <div class="memex-result-head">
+          <span class="memex-result-name">${escapeHtml(r.name)} ${line}</span>
+          <span class="memex-result-root">${escapeHtml(r.root_label)}</span>
+        </div>${snippet}
+      </div>`;
+    }).join('');
+    box.innerHTML = head + items;
+    memexRefreshLiveStats();
+  } catch (e) {
+    box.innerHTML = `<div class="text-red-400 px-2 py-4">Erreur: ${e.message}</div>`;
+  }
+}
+
+async function memexOpenFileAtHeading(rootId, rel, heading) {
+  await memexOpenFile(rootId, rel);
+  // charge la section après ouverture
+  setTimeout(() => memexLoadSection(heading), 200);
+}
+
+function highlightSnippet(text, q) {
+  const safe = escapeHtml(text);
+  const re = new RegExp(escapeRegex(q), 'gi');
+  return safe.replace(re, m => `<mark>${m}</mark>`);
+}
+function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeAttr(s) { return escapeHtml(s).replace(/'/g, '&#39;'); }
+
+// Recent
+async function memexLoadRecent() {
+  const box = document.getElementById('memex-recent');
+  box.innerHTML = '<div class="text-gray-500 px-2 py-4 text-center">⏳…</div>';
+  try {
+    const data = await api('GET', '/api/memory-explorer/recent?limit=50');
+    if (!data.files.length) { box.innerHTML = 'Aucun fichier'; return; }
+    box.innerHTML = data.files.map(f => `
+      <div class="memex-recent-item" onclick="memexOpenFile('${escapeAttr(f.root)}', '${escapeAttr(f.rel)}')">
+        <div class="min-w-0 flex-1 mr-2">
+          <div class="truncate text-gray-200">${escapeHtml(f.name)}</div>
+          <div class="text-xs text-gray-500 truncate">${escapeHtml(f.root_label)} · ${escapeHtml(f.rel)}</div>
+        </div>
+        <div class="memex-recent-age">${formatAge(f.age_seconds)}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="text-red-400 p-2">Erreur: ${e.message}</div>`;
+  }
+}
+
+function formatAge(s) {
+  if (s < 60) return 'il y a <1min';
+  if (s < 3600) return `il y a ${Math.floor(s/60)}min`;
+  if (s < 86400) return `il y a ${Math.floor(s/3600)}h`;
+  if (s < 86400*7) return `il y a ${Math.floor(s/86400)}j`;
+  return new Date(Date.now() - s*1000).toLocaleDateString();
+}
+
+// Graph
+async function memexEnsureVis() {
+  if (window.vis && window.vis.Network) return true;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js';
+    s.onload = () => resolve(true);
+    s.onerror = () => reject(new Error('Impossible de charger vis-network'));
+    document.head.appendChild(s);
+  });
+}
+
+async function memexBuildGraph() {
+  const canvas = document.getElementById('memex-graph-canvas');
+  canvas.innerHTML = '<div class="text-gray-500 p-4 text-center text-sm">⏳ Chargement…</div>';
+  try {
+    await memexEnsureVis();
+    const data = await api('GET', '/api/memory-explorer/graph');
+    document.getElementById('memex-graph-stats').textContent =
+      `${data.nodes.length} fichiers · ${data.edges.length} liens`;
+    // Couleur par root
+    const rootColors = {};
+    const palette = ['#6366f1','#10b981','#f59e0b','#ec4899','#06b6d4','#8b5cf6','#ef4444','#84cc16'];
+    let ci = 0;
+    const nodes = data.nodes.map(n => {
+      if (!(n.root in rootColors)) rootColors[n.root] = palette[ci++ % palette.length];
+      const deg = (n.in_degree || 0) + (n.out_degree || 0);
+      return {
+        id: n.id,
+        label: n.label,
+        title: `${n.root_label} · ${n.rel}\nin:${n.in_degree} out:${n.out_degree}`,
+        color: { background: rootColors[n.root], border: n.is_index ? '#fbbf24' : rootColors[n.root] },
+        font: { color: '#e5e7eb', size: 11 },
+        shape: n.is_index ? 'star' : 'dot',
+        size: 8 + Math.min(deg, 12) * 2,
+        _root: n.root, _rel: n.rel,
+      };
+    });
+    const edges = data.edges.map((e, i) => ({
+      id: `e${i}`, from: e.from, to: e.to,
+      arrows: 'to', color: { color: '#374151', opacity: 0.6 },
+    }));
+    canvas.innerHTML = '';
+    const network = new vis.Network(canvas, { nodes, edges }, {
+      physics: { stabilization: { iterations: 150 }, barnesHut: { gravitationalConstant: -3000, springLength: 120 } },
+      interaction: { hover: true, tooltipDelay: 200 },
+      nodes: { borderWidth: 2 },
+    });
+    network.on('doubleClick', (params) => {
+      if (params.nodes.length) {
+        const node = nodes.find(n => n.id === params.nodes[0]);
+        if (node) memexOpenFile(node._root, node._rel);
+      }
+    });
+    memex.graph = network;
+  } catch (e) {
+    canvas.innerHTML = `<div class="text-red-400 p-4 text-sm">Erreur: ${e.message}</div>`;
+  }
+}
+
+// Track dirty editor
+document.addEventListener('DOMContentLoaded', () => {
+  const ed = document.getElementById('memex-editor');
+  if (ed) {
+    ed.addEventListener('input', () => {
+      if (memex.currentRoot && !memex.dirty) {
+        memex.dirty = true;
+        document.getElementById('memex-editor-status').textContent = '● Modifié';
+      }
+    });
+    // Ctrl+S save
+    ed.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        memexSaveFile();
+      }
+    });
+  }
+});
 
 // ── History ───────────────────────────────────────────────────────
 async function historyAction(action) {

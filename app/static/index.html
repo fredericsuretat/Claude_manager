@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+  <!-- vis-network — chargé à la demande pour le graph Memory CC -->
 </head>
 <body class="bg-gray-950 text-gray-100 min-h-screen flex flex-col">
 
@@ -245,25 +246,132 @@
         </div>
       </div>
 
-      <!-- ── MEMORY ── -->
+      <!-- ── MEMORY CONTROL CENTER ── -->
       <div id="tab-memory" class="tab-content hidden">
-        <h2 class="section-title">Fichiers mémoire</h2>
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div class="space-y-2">
-            <button onclick="loadMemory('claude_md')" class="memory-btn active-mem" id="mem-btn-claude_md">📄 claude.md</button>
-            <button onclick="loadMemory('architecture')" class="memory-btn" id="mem-btn-architecture">🏗 architecture.md</button>
-            <button onclick="loadMemory('stack')" class="memory-btn" id="mem-btn-stack">🔧 stack.md</button>
-            <button onclick="loadMemory('bugs')" class="memory-btn" id="mem-btn-bugs">🐛 bugs.md</button>
-            <button onclick="loadMemory('habits')" class="memory-btn" id="mem-btn-habits">🔄 habits.md</button>
-            <div id="mem-meta" class="text-xs text-gray-500 mt-2 px-2"></div>
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <h2 class="section-title mb-0">🧠 Memory Control Center</h2>
+          <div class="flex items-center gap-2 text-xs text-gray-400">
+            <span id="memex-stats">—</span>
+            <button onclick="memexRefreshAll()" class="btn-ghost text-xs">↺ Re-scan</button>
           </div>
-          <div class="lg:col-span-2 card">
-            <div class="flex justify-between items-center mb-2">
-              <div class="card-title" id="mem-current-name">claude.md</div>
-              <button onclick="saveMemory()" class="btn-primary text-sm">💾 Sauvegarder</button>
+        </div>
+
+        <!-- Live token-economy bar -->
+        <div id="memex-live-bar" class="mb-3 flex flex-wrap items-center gap-3 text-xs bg-gray-900 border border-gray-800 rounded-lg px-3 py-2">
+          <span class="text-gray-500">💎 Tokens économisés:</span>
+          <span id="memex-live-saved" class="text-green-400 font-bold">0</span>
+          <span class="text-gray-600">|</span>
+          <span class="text-gray-500">Calls:</span>
+          <span id="memex-live-calls" class="text-violet-400 font-mono">0</span>
+          <span class="text-gray-600">|</span>
+          <span id="memex-live-breakdown" class="text-gray-400 font-mono"></span>
+          <button onclick="memexResetStats()" class="btn-ghost text-xs ml-auto">⟲ Reset</button>
+        </div>
+
+        <!-- Sub-tabs -->
+        <div class="flex flex-wrap gap-1 mb-3 border-b border-gray-800">
+          <button class="memex-subtab active" data-view="tree" onclick="memexShowView('tree')">📁 Arbre</button>
+          <button class="memex-subtab" data-view="search" onclick="memexShowView('search')">🔍 Recherche</button>
+          <button class="memex-subtab" data-view="recent" onclick="memexShowView('recent')">🕒 Récents</button>
+          <button class="memex-subtab" data-view="graph" onclick="memexShowView('graph')">🕸 Graph</button>
+          <button class="memex-subtab" data-view="roadmap" onclick="memexShowView('roadmap')">🗺 Roadmap</button>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+
+          <!-- LEFT panel (tree / search / recent / graph) -->
+          <div class="lg:col-span-2 card p-0 overflow-hidden flex flex-col" style="max-height:75vh;">
+
+            <!-- TREE view -->
+            <div id="memex-view-tree" class="memex-view flex flex-col flex-1 min-h-0">
+              <div class="p-3 border-b border-gray-800">
+                <input id="memex-tree-filter" class="input text-sm" placeholder="Filtrer par nom de fichier ou root…"
+                       oninput="memexRenderTree()">
+              </div>
+              <div id="memex-tree" class="flex-1 overflow-y-auto p-2 text-sm">Chargement…</div>
             </div>
-            <textarea id="mem-editor" class="input h-96 resize-y font-mono text-sm" placeholder="Chargement…"></textarea>
+
+            <!-- SEARCH view -->
+            <div id="memex-view-search" class="memex-view hidden flex-col flex-1 min-h-0">
+              <div class="p-3 border-b border-gray-800 space-y-2">
+                <input id="memex-search-q" class="input text-sm" placeholder="Requête (Entrée)…"
+                       onkeydown="if(event.key==='Enter')memexRunSearch()">
+                <div class="flex flex-wrap gap-1 text-xs">
+                  <button onclick="memexRunSearch('full')" class="btn-primary text-xs flex-1">🔍 Full-text</button>
+                  <button onclick="memexRunSearch('meta')" class="btn-secondary text-xs flex-1" title="Sans snippet, ~3-5× moins de tokens">📋 Meta</button>
+                  <button onclick="memexRunSearch('headings')" class="btn-secondary text-xs flex-1" title="Uniquement dans les titres ##">🏷 Headings</button>
+                </div>
+              </div>
+              <div id="memex-search-results" class="flex-1 overflow-y-auto p-2 text-sm">
+                <div class="text-gray-500 px-2 py-4 text-center">Aucune recherche</div>
+              </div>
+            </div>
+
+            <!-- RECENT view -->
+            <div id="memex-view-recent" class="memex-view hidden flex-col flex-1 min-h-0">
+              <div id="memex-recent" class="flex-1 overflow-y-auto p-2 text-sm">Chargement…</div>
+            </div>
+
+            <!-- ROADMAP view -->
+            <div id="memex-view-roadmap" class="memex-view hidden flex-col flex-1 min-h-0">
+              <div class="p-3 border-b border-gray-800 text-xs text-gray-400">
+                <div class="font-semibold text-gray-200 mb-1">Token-saving roadmap</div>
+                <div>4 endpoints pour économiser des tokens quand Claude consulte la mémoire.</div>
+              </div>
+              <div id="memex-roadmap" class="flex-1 overflow-y-auto p-2 space-y-2 text-sm">Chargement…</div>
+            </div>
+
+            <!-- GRAPH view -->
+            <div id="memex-view-graph" class="memex-view hidden flex-col flex-1 min-h-0">
+              <div class="p-2 border-b border-gray-800 flex items-center justify-between text-xs text-gray-400">
+                <span id="memex-graph-stats">—</span>
+                <button onclick="memexBuildGraph()" class="btn-ghost text-xs">↺</button>
+              </div>
+              <div id="memex-graph-canvas" class="flex-1 bg-gray-950" style="min-height:400px;"></div>
+            </div>
+
           </div>
+
+          <!-- RIGHT panel: editor -->
+          <div class="lg:col-span-3 card flex flex-col relative" style="max-height:75vh;">
+
+            <!-- Skim/Index overlay -->
+            <div id="memex-overlay" class="hidden absolute inset-0 bg-gray-900/95 z-10 p-4 overflow-auto rounded-lg">
+              <div class="flex justify-between items-center mb-3">
+                <div id="memex-overlay-title" class="font-semibold text-gray-100"></div>
+                <button onclick="memexCloseOverlay()" class="btn-ghost text-sm">✕ Fermer</button>
+              </div>
+              <pre id="memex-overlay-body" class="text-xs font-mono whitespace-pre-wrap text-gray-200"></pre>
+            </div>
+
+            <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+              <div class="min-w-0 flex-1">
+                <div class="card-title truncate" id="memex-current-name">Aucun fichier sélectionné</div>
+                <div class="text-xs text-gray-500 truncate" id="memex-current-path"></div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <span id="memex-current-meta" class="text-xs text-gray-500"></span>
+                <button onclick="memexSkimCurrent()" class="btn-ghost text-xs" title="Skim: aperçu sans charger le fichier complet" id="memex-skim-btn" disabled>👁 Skim</button>
+                <button onclick="memexShowIndex()" class="btn-ghost text-xs hidden" title="Parser cet index" id="memex-idx-btn">📚 Index</button>
+                <button onclick="memexCopyPath()" class="btn-ghost text-xs" title="Copier le chemin">📋</button>
+                <button onclick="memexSaveFile()" class="btn-primary text-sm" id="memex-save-btn" disabled>💾 Sauvegarder</button>
+              </div>
+            </div>
+            <!-- Mini TOC (sections) -->
+            <div id="memex-toc" class="mb-2 hidden">
+              <div class="text-xs text-gray-500 mb-1">📑 Sections (clic = charger uniquement):</div>
+              <div id="memex-toc-list" class="flex flex-wrap gap-1"></div>
+            </div>
+            <textarea id="memex-editor" class="input flex-1 resize-none font-mono text-sm" placeholder="Sélectionne un fichier dans l'arbre…" disabled></textarea>
+            <div class="mt-2 flex items-center justify-between gap-2">
+              <div id="memex-editor-status" class="text-xs text-gray-500"></div>
+              <div class="flex gap-2">
+                <button onclick="memexNewFile()" class="btn-ghost text-xs">➕ Nouveau</button>
+                <button onclick="memexDeleteFile()" class="btn-ghost text-xs text-red-400" id="memex-del-btn" disabled>🗑 Supprimer</button>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
 

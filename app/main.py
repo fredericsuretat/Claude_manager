@@ -603,6 +603,252 @@ def mcp_delete_profile(name: str):
     return _mcp_svc.delete_profile(name)
 
 
+# ── REST: Memory Explorer (Memory Control Center) ─────────────────
+from app.services.memory_explorer_service import MemoryExplorerService as _MemoryExplorerService
+_memex_svc = _MemoryExplorerService()
+
+# ── Stats tracker (compteurs + tokens économisés) ─────────────────
+import threading as _memex_thr
+from app.config import RUNTIME_DIR as _MEMEX_RT
+_MEMEX_STATS_FILE = _MEMEX_RT / "memex_stats.json"
+_memex_stats_lock = _memex_thr.Lock()
+
+def _memex_load_stats() -> dict:
+    try:
+        if _MEMEX_STATS_FILE.exists():
+            return json.loads(_MEMEX_STATS_FILE.read_text())
+    except Exception:
+        pass
+    return {
+        "calls": {},           # endpoint -> count
+        "tokens_full": 0,      # tokens qu'auraient coûté des Read complets
+        "tokens_actual": 0,    # tokens effectivement renvoyés
+        "tokens_saved": 0,     # estimation économie
+        "since": datetime.now().isoformat(),
+    }
+
+_memex_stats: dict = _memex_load_stats()
+
+def _memex_save_stats():
+    try:
+        _MEMEX_STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _MEMEX_STATS_FILE.write_text(json.dumps(_memex_stats, ensure_ascii=False, indent=2))
+    except Exception as e:
+        sync_logger(f"[MEMEX] save stats failed: {e}")
+
+def _memex_track(endpoint: str, full_tokens: int = 0, actual_tokens: int = 0):
+    with _memex_stats_lock:
+        _memex_stats["calls"][endpoint] = _memex_stats["calls"].get(endpoint, 0) + 1
+        _memex_stats["tokens_full"] += full_tokens
+        _memex_stats["tokens_actual"] += actual_tokens
+        saved = max(0, full_tokens - actual_tokens)
+        _memex_stats["tokens_saved"] += saved
+        # save async-ish (rate-limit: only every 10 calls)
+        total_calls = sum(_memex_stats["calls"].values())
+        if total_calls % 10 == 0:
+            _memex_save_stats()
+
+
+@app.get("/api/memory-explorer/tree")
+def memex_tree():
+    return _memex_svc.tree()
+
+
+@app.get("/api/memory-explorer/stats")
+def memex_stats():
+    return _memex_svc.stats()
+
+
+@app.get("/api/memory-explorer/file")
+def memex_get(root: str, rel: str):
+    try:
+        return _memex_svc.read(root, rel)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.put("/api/memory-explorer/file")
+def memex_put(body: dict):
+    root = body.get("root", "")
+    rel = body.get("rel", "")
+    content = body.get("content", "")
+    try:
+        result = _memex_svc.write(root, rel, content)
+        sync_logger(f"[MEMEX] write {root}/{rel} ({result.get('size')} bytes)")
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/memory-explorer/file")
+def memex_create(body: dict):
+    root = body.get("root", "")
+    rel = body.get("rel", "")
+    content = body.get("content", "")
+    try:
+        result = _memex_svc.create(root, rel, content)
+        if result.get("ok"):
+            sync_logger(f"[MEMEX] create {root}/{rel}")
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.delete("/api/memory-explorer/file")
+def memex_delete(root: str, rel: str):
+    try:
+        result = _memex_svc.delete(root, rel)
+        if result.get("ok"):
+            sync_logger(f"[MEMEX] delete {root}/{rel}")
+        return result
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.get("/api/memory-explorer/search")
+def memex_search(q: str = "", limit: int = 200):
+    return _memex_svc.search(q, max_results=limit)
+
+
+@app.get("/api/memory-explorer/recent")
+def memex_recent(limit: int = 40):
+    return _memex_svc.recent(limit=limit)
+
+
+@app.get("/api/memory-explorer/graph")
+def memex_graph():
+    return _memex_svc.graph()
+
+
+@app.post("/api/memory-explorer/refresh")
+def memex_refresh():
+    _memex_svc.invalidate_cache()
+    return {"ok": True}
+
+
+# ── Roadmap endpoints (token-saving) ─────────────────────────────
+@app.get("/api/memory-explorer/skim")
+def memex_skim(root: str, rel: str, body_lines: int = 8):
+    try:
+        r = _memex_svc.skim(root, rel, body_lines=body_lines)
+        if "approx_tokens_full" in r:
+            _memex_track("skim", r["approx_tokens_full"], r["approx_tokens_skim"])
+        return r
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.get("/api/memory-explorer/search-meta")
+def memex_search_meta(q: str = "", limit: int = 500):
+    r = _memex_svc.search_meta(q, max_results=limit)
+    # heuristique: 1 search-meta économise ~50 tok par fichier (vs search avec snippets)
+    saved = r.get("count", 0) * 50
+    _memex_track("search-meta", saved, 0)
+    return r
+
+
+@app.get("/api/memory-explorer/search-headings")
+def memex_search_headings(q: str = "", limit: int = 200):
+    r = _memex_svc.search_headings(q, max_results=limit)
+    # heuristique: chaque heading match évite ~200 tok de skim
+    saved = r.get("count", 0) * 200
+    _memex_track("search-headings", saved, 0)
+    return r
+
+
+@app.get("/api/memory-explorer/index")
+def memex_index(root: str, name: str = "MEMORY.md"):
+    r = _memex_svc.parse_index(root, name)
+    _memex_track("index")
+    return r
+
+
+@app.get("/api/memory-explorer/section")
+def memex_section(root: str, rel: str, heading: str):
+    try:
+        r = _memex_svc.read_section(root, rel, heading)
+        if "approx_tokens" in r and "approx_tokens_full_file" in r:
+            _memex_track("section", r["approx_tokens_full_file"], r["approx_tokens"])
+        return r
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.get("/api/memory-explorer/stats-live")
+def memex_stats_live():
+    with _memex_stats_lock:
+        snap = dict(_memex_stats)
+        snap["total_calls"] = sum(snap["calls"].values())
+    return snap
+
+
+@app.post("/api/memory-explorer/stats-live/reset")
+def memex_stats_reset():
+    with _memex_stats_lock:
+        _memex_stats["calls"] = {}
+        _memex_stats["tokens_full"] = 0
+        _memex_stats["tokens_actual"] = 0
+        _memex_stats["tokens_saved"] = 0
+        _memex_stats["since"] = datetime.now().isoformat()
+        _memex_save_stats()
+    return {"ok": True}
+
+
+# ── Roadmap metadata (consommé par l'UI) ─────────────────────────
+MEMEX_ROADMAP = [
+    {
+        "id": "skim",
+        "title": "1. Skim — aperçu léger",
+        "status": "done",
+        "endpoint": "GET /api/memory-explorer/skim?root=&rel=",
+        "why": "Décider si un .md vaut la peine d'être lu en entier, sans payer 2000 tokens à chaque vérif.",
+        "returns": "frontmatter + headings + 8 premières lignes utiles",
+        "savings": "~10x tokens vs read complet",
+    },
+    {
+        "id": "search-meta",
+        "title": "2. Search meta-only",
+        "status": "done",
+        "endpoint": "GET /api/memory-explorer/search-meta?q=",
+        "why": "Identifier QUELS fichiers contiennent un mot sans payer les snippets.",
+        "returns": "[{root, rel, name, line, count}] — pas de snippet",
+        "savings": "~3-5x tokens vs /search",
+    },
+    {
+        "id": "index",
+        "title": "3. Index parser (MEMORY.md)",
+        "status": "done",
+        "endpoint": "GET /api/memory-explorer/index?root=&name=MEMORY.md",
+        "why": "Vue structurée de l'index + détection orphelins/liens cassés.",
+        "returns": "[{title, file, hook, exists}] + missing[] + orphans[]",
+        "savings": "Maintenance qualité de l'index (qui guide tout le reste)",
+    },
+    {
+        "id": "section",
+        "title": "4. Section read",
+        "status": "done",
+        "endpoint": "GET /api/memory-explorer/section?root=&rel=&heading=",
+        "why": "Lire UNE section ## précise au lieu du fichier entier.",
+        "returns": "Contenu de la section jusqu'au prochain heading de niveau ≤",
+        "savings": "~3-10x sur les gros .md structurés",
+    },
+    {
+        "id": "search-headings",
+        "title": "5. Search headings (bonus)",
+        "status": "done",
+        "endpoint": "GET /api/memory-explorer/search-headings?q=",
+        "why": "Localiser un sujet via les titres ## sans lire les contenus.",
+        "returns": "[{root, rel, name, heading, level}]",
+        "savings": "Réponse à 'où est documenté X ?' en ~50 tokens",
+    },
+]
+
+
+@app.get("/api/memory-explorer/roadmap")
+def memex_roadmap():
+    return {"items": MEMEX_ROADMAP}
+
+
 # ── Static files ───────────────────────────────────────────────────
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")

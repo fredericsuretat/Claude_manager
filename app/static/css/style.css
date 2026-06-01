@@ -107,3 +107,159 @@
 .state-idle         { background: #1c1917; color: #a8a29e; }
 .state-rate_limited { background: #7f1d1d; color: #fca5a5; }
 .state-unknown      { background: #1f2937; color: #9ca3af; }
+
+/* ── Memory Control Center ─────────────────────────────────────── */
+.memex-subtab {
+  padding: 8px 14px;
+  font-size: 0.875rem;
+  color: #9ca3af;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.memex-subtab:hover { color: #e5e7eb; }
+.memex-subtab.active {
+  color: #c7d2fe;
+  border-bottom-color: #6366f1;
+}
+.memex-view { display: flex; }
+.memex-view.hidden { display: none; }
+
+.memex-root {
+  border-radius: 6px;
+  margin: 2px 0;
+}
+.memex-root-header {
+  padding: 6px 8px;
+  cursor: pointer;
+  color: #d1d5db;
+  font-weight: 600;
+  font-size: 0.8rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  border-radius: 6px;
+}
+.memex-root-header:hover { background: #1f2937; }
+.memex-root-files { padding-left: 8px; }
+.memex-root.collapsed .memex-root-files { display: none; }
+.memex-root-count {
+  font-size: 0.7rem;
+  color: #6b7280;
+  background: #1f2937;
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
+.memex-file {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 0.8rem;
+  font-family: ui-monospace, monospace;
+}
+.memex-file:hover { background: #1e293b; color: #f3f4f6; }
+.memex-file.active { background: #312e81; color: #c7d2fe; }
+.memex-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.memex-file-meta { font-size: 0.65rem; color: #6b7280; margin-left: 8px; }
+.memex-file.is-index .memex-file-name::before { content: '★ '; color: #fbbf24; }
+
+.memex-result {
+  padding: 8px;
+  border-radius: 6px;
+  margin: 4px 0;
+  background: #0f172a;
+  border-left: 3px solid #6366f1;
+  cursor: pointer;
+}
+.memex-result:hover { background: #1e293b; }
+.memex-result-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  margin-bottom: 4px;
+}
+.memex-result-name { color: #e5e7eb; font-weight: 600; }
+.memex-result-root { color: #6b7280; font-size: 0.65rem; }
+.memex-result-snippet {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  font-family: ui-monospace, monospace;
+  white-space: pre-wrap;
+  line-height: 1.4;
+  max-height: 60px;
+  overflow: hidden;
+}
+.memex-result-snippet mark { background: #fbbf2440; color: #fcd34d; padding: 0 2px; }
+
+.memex-recent-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #d1d5db;
+  font-size: 0.8rem;
+}
+.memex-recent-item:hover { background: #1e293b; }
+.memex-recent-age { color: #6b7280; font-size: 0.7rem; }
+
+/* ── Memory CC: Roadmap + Skim + TOC ───────────────────────────── */
+.memex-roadmap-card {
+  background: #0f172a;
+  border: 1px solid #1f2937;
+  border-left: 3px solid #6366f1;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.memex-roadmap-card.status-done { border-left-color: #10b981; }
+.memex-roadmap-card.status-wip  { border-left-color: #f59e0b; }
+.memex-roadmap-card.status-todo { border-left-color: #6b7280; }
+.memex-roadmap-title {
+  display: flex; justify-content: space-between; align-items: center;
+  font-weight: 600; color: #e5e7eb; font-size: 0.85rem; margin-bottom: 6px;
+}
+.memex-roadmap-badge {
+  font-size: 0.65rem; padding: 2px 8px; border-radius: 9999px;
+  text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;
+}
+.memex-roadmap-badge.done { background: #064e3b; color: #6ee7b7; }
+.memex-roadmap-badge.wip  { background: #78350f; color: #fbbf24; }
+.memex-roadmap-badge.todo { background: #1f2937; color: #9ca3af; }
+.memex-roadmap-endpoint {
+  font-family: ui-monospace, monospace; font-size: 0.7rem;
+  color: #93c5fd; background: #1e293b; padding: 2px 6px; border-radius: 4px;
+  display: inline-block; margin: 4px 0; word-break: break-all;
+}
+.memex-roadmap-row { font-size: 0.72rem; color: #9ca3af; margin: 2px 0; }
+.memex-roadmap-row .lab { color: #6b7280; }
+.memex-roadmap-test {
+  margin-top: 6px; font-size: 0.7rem; color: #c7d2fe;
+  background: #1e1b4b; padding: 4px 8px; border-radius: 4px;
+  cursor: pointer; border: none;
+}
+.memex-roadmap-test:hover { background: #312e81; }
+.memex-roadmap-output {
+  margin-top: 6px; font-family: ui-monospace, monospace;
+  font-size: 0.65rem; color: #d1d5db; background: #020617;
+  padding: 6px 8px; border-radius: 4px; max-height: 200px; overflow: auto;
+  white-space: pre-wrap; word-break: break-all;
+}
+
+.memex-toc-item {
+  font-size: 0.7rem; padding: 2px 8px; border-radius: 4px;
+  background: #1f2937; color: #cbd5e1; cursor: pointer; border: none;
+  font-family: ui-monospace, monospace;
+}
+.memex-toc-item:hover { background: #312e81; color: #e0e7ff; }
+.memex-toc-item.level-2 { padding-left: 8px; }
+.memex-toc-item.level-3 { padding-left: 16px; opacity: 0.85; }
+.memex-toc-item.level-4 { padding-left: 24px; opacity: 0.7; font-size: 0.65rem; }
