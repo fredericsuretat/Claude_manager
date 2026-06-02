@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "memory-cc": {
+      "command": "/home/frederic/Documents/Dev/Claude_manager/venv/bin/python",
+      "args": [
+        "/home/frederic/Documents/Dev/Claude_manager/mcp_server/memory_cc_server.py"
+      ],
+      "env": {
+        "MEMORY_CC_URL": "http://127.0.0.1:8765"
+      }
+    }
+  }
+}
