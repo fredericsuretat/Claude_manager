@@ -105,6 +105,9 @@ function applyStatus(data) {
   updateUsageBar(data.claude_usage || {});
   if ((data.claude_usage || {}).live) renderLiveUsage(data.claude_usage.live);
 
+  // Memory CC economy card
+  refreshDashboardMemexCard();
+
   // Claude usage mini-dashboard card
   const cu = data.claude_usage || {};
   setEl('d-plan-type', (cu.subscription || '—').toUpperCase());
@@ -451,7 +454,18 @@ const memex = {
   graph: null,                 // instance vis Network
   graphLoaded: false,
   initialized: false,
+  typeFilter: '',              // '' | 'user' | 'feedback' | 'project' | 'reference'
 };
+
+const MEMEX_TYPE_ICONS = {
+  user: '👤', feedback: '⚠', project: '📦', reference: '🔗',
+};
+
+function memexFilterType(btn, type) {
+  memex.typeFilter = type;
+  document.querySelectorAll('.memex-type-btn').forEach(b => b.classList.toggle('active', b === btn));
+  memexRenderTree();
+}
 
 async function memexInit() {
   if (!memex.initialized) {
@@ -465,6 +479,34 @@ async function memexInit() {
       }
     }, 5000);
   }
+}
+
+// Dashboard widget — minimal periodic refresh
+let _memexDashLast = 0;
+async function refreshDashboardMemexCard() {
+  // Throttle to once every 4s (called every status refresh which happens often)
+  if (Date.now() - _memexDashLast < 4000) return;
+  _memexDashLast = Date.now();
+  try {
+    const stats = await api('GET', '/api/memory-explorer/stats-live');
+    const savedEl = document.getElementById('d-memex-saved');
+    const callsEl = document.getElementById('d-memex-calls');
+    const ratioEl = document.getElementById('d-memex-ratio');
+    if (!savedEl) return;
+    savedEl.textContent = (stats.tokens_saved || 0).toLocaleString('fr-FR');
+    callsEl.textContent = stats.total_calls || 0;
+    const full = (stats.tokens_saved || 0) + (stats.tokens_actual || 0);
+    const ratio = full > 0 ? Math.round((stats.tokens_saved / full) * 100) : 0;
+    ratioEl.textContent = full > 0 ? `${ratio}%` : '—';
+    // Optionally load heatmap top-3
+    const hm = await api('GET', '/api/memory-explorer/heatmap?limit=3').catch(() => null);
+    const topEl = document.getElementById('d-memex-top');
+    if (topEl && hm && hm.items && hm.items.length) {
+      topEl.innerHTML = '🔥 Top: ' + hm.items.map(it => `<span class="text-gray-300">${escapeHtml(it.rel)}</span> (${it.calls})`).join(' · ');
+    } else if (topEl) {
+      topEl.textContent = '';
+    }
+  } catch (e) {}
 }
 
 async function memexRefreshLiveStats() {
@@ -514,17 +556,22 @@ async function memexLoadTree() {
 
 function memexRenderTree() {
   const filter = (document.getElementById('memex-tree-filter')?.value || '').toLowerCase();
+  const typeFilter = memex.typeFilter || '';
   const data = memex.tree;
   const el = document.getElementById('memex-tree');
   if (!data || !data.roots) { el.textContent = 'Aucune donnée'; return; }
   const parts = [];
   for (const root of data.roots) {
-    const matchedFiles = filter
-      ? root.files.filter(f =>
-          f.rel.toLowerCase().includes(filter) ||
-          root.label.toLowerCase().includes(filter))
-      : root.files;
-    if (filter && matchedFiles.length === 0) continue;
+    let matchedFiles = root.files;
+    if (typeFilter) {
+      matchedFiles = matchedFiles.filter(f => (f.type || '') === typeFilter);
+    }
+    if (filter) {
+      matchedFiles = matchedFiles.filter(f =>
+        f.rel.toLowerCase().includes(filter) ||
+        root.label.toLowerCase().includes(filter));
+    }
+    if ((filter || typeFilter) && matchedFiles.length === 0) continue;
     const collapsed = memex.collapsed.has(root.id);
     parts.push(`<div class="memex-root ${collapsed ? 'collapsed' : ''}" data-root="${root.id}">`);
     parts.push(`<div class="memex-root-header" onclick="memexToggleRoot('${escapeAttr(root.id)}')">
@@ -537,10 +584,13 @@ function memexRenderTree() {
       const idx = f.is_index ? 'is-index' : '';
       const dt = new Date(f.mtime * 1000);
       const dateStr = `${dt.getMonth()+1}/${dt.getDate()}`;
+      const typeBadge = f.type
+        ? `<span class="memex-type-badge type-${f.type}" title="${escapeAttr(f.type)}">${MEMEX_TYPE_ICONS[f.type] || '·'}</span>`
+        : '';
       parts.push(`<div class="memex-file ${active} ${idx}"
             onclick="memexOpenFile('${escapeAttr(root.id)}', '${escapeAttr(f.rel)}')"
-            title="${escapeAttr(f.rel)}">
-          <span class="memex-file-name">${escapeHtml(f.rel)}</span>
+            title="${escapeAttr(f.rel)}${f.type ? ' · type=' + f.type : ''}">
+          ${typeBadge}<span class="memex-file-name">${escapeHtml(f.rel)}</span>
           <span class="memex-file-meta">${(f.size/1024).toFixed(1)}K · ${dateStr}</span>
         </div>`);
     }
@@ -676,6 +726,92 @@ function memexShowView(view) {
   if (view === 'recent') memexLoadRecent();
   if (view === 'graph') memexBuildGraph();
   if (view === 'roadmap') memexLoadRoadmap();
+  if (view === 'heatmap') memexLoadHeatmap();
+  if (view === 'health') memexLoadHealth();
+}
+
+// ── Heatmap panel ─────────────────────────────────────────────────
+async function memexLoadHeatmap() {
+  const box = document.getElementById('memex-heatmap');
+  box.innerHTML = '<div class="text-gray-500 p-2">⏳…</div>';
+  try {
+    const data = await api('GET', '/api/memory-explorer/heatmap?limit=30');
+    if (!data.items || data.items.length === 0) {
+      box.innerHTML = `
+        <div class="text-gray-500 p-4 text-center">
+          <div class="text-3xl mb-2">📊</div>
+          <div>Aucune donnée d'usage encore.</div>
+          <div class="text-xs mt-2">La heatmap se remplit dès que skim/section/read sont appelés sur des fichiers.</div>
+        </div>`;
+      return;
+    }
+    const max = Math.max(...data.items.map(i => i.calls));
+    box.innerHTML = data.items.map(it => {
+      const pct = max > 0 ? Math.round((it.calls / max) * 100) : 0;
+      const endpoints = Object.entries(it.by_endpoint || {})
+        .map(([k, v]) => `<span class="memex-heat-badge">${escapeHtml(k)}:${v}</span>`)
+        .join('');
+      const lastTxt = it.last ? new Date(it.last).toLocaleString() : '—';
+      return `
+        <div class="memex-heat-item" onclick="memexOpenFile('${escapeAttr(it.root)}','${escapeAttr(it.rel)}')">
+          <div class="memex-heat-bar" style="width:${pct}%"></div>
+          <div class="memex-heat-content">
+            <div class="memex-heat-header">
+              <span class="memex-heat-name">${escapeHtml(it.rel)}</span>
+              <span class="memex-heat-calls">${it.calls} call${it.calls > 1 ? 's' : ''}</span>
+            </div>
+            <div class="memex-heat-meta">
+              <span class="text-gray-500">${escapeHtml(it.root)}</span>
+              <span class="text-green-400">💾 ${it.tokens_saved} tok</span>
+            </div>
+            <div class="memex-heat-endpoints">${endpoints}</div>
+            <div class="memex-heat-last text-gray-600">dernier: ${escapeHtml(lastTxt)}</div>
+          </div>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    box.innerHTML = `<div class="text-red-400 p-2">Erreur: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ── Health panel ──────────────────────────────────────────────────
+async function memexLoadHealth() {
+  const box = document.getElementById('memex-health');
+  box.innerHTML = '<div class="text-gray-500 p-2">⏳…</div>';
+  try {
+    const data = await api('GET', '/api/memory-explorer/index-health');
+    const t = data.totals || {};
+    let html = `
+      <div class="memex-health-summary">
+        <div class="memex-health-stat"><span class="lab">Indexes</span> <span class="val">${t.indexes || 0}</span></div>
+        <div class="memex-health-stat ${(t.missing||0)>0?'bad':'ok'}"><span class="lab">Liens cassés</span> <span class="val">${t.missing || 0}</span></div>
+        <div class="memex-health-stat ${(t.orphans||0)>0?'warn':'ok'}"><span class="lab">Orphelins</span> <span class="val">${t.orphans || 0}</span></div>
+      </div>`;
+    if (!data.reports || data.reports.length === 0) {
+      html += '<div class="text-gray-500 p-4 text-center">Aucun MEMORY.md trouvé.</div>';
+    } else {
+      html += data.reports.map(r => {
+        const status = r.missing_count > 0 ? 'bad' : (r.orphans_count > 0 ? 'warn' : 'ok');
+        const missingList = r.missing.length
+          ? `<div class="memex-health-list"><b class="text-red-400">Manquants (${r.missing.length}):</b> ${r.missing.map(escapeHtml).join(', ')}</div>` : '';
+        const orphansList = r.orphans.length
+          ? `<div class="memex-health-list"><b class="text-amber-400">Orphelins (${r.orphans.length}):</b> ${r.orphans.slice(0,15).map(o => `<span class="memex-orphan" onclick="memexOpenFile('${escapeAttr(r.root)}','${escapeAttr(o)}')">${escapeHtml(o)}</span>`).join(' · ')}${r.orphans.length > 15 ? ` <span class="text-gray-500">+${r.orphans.length-15} autres</span>` : ''}</div>` : '';
+        return `
+          <div class="memex-health-report status-${status}">
+            <div class="memex-health-title">
+              <span>${escapeHtml(r.root_label || r.root)}</span>
+              <span class="text-xs text-gray-500">${escapeHtml(r.index)} · ${r.entries} entries</span>
+            </div>
+            ${missingList || orphansList ? '' : '<div class="text-green-400 text-xs">✓ Propre</div>'}
+            ${missingList}
+            ${orphansList}
+          </div>`;
+      }).join('');
+    }
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = `<div class="text-red-400 p-2">Erreur: ${escapeHtml(e.message)}</div>`;
+  }
 }
 
 // ── Roadmap panel ─────────────────────────────────────────────────

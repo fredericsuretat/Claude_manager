@@ -263,3 +263,87 @@
 .memex-toc-item.level-2 { padding-left: 8px; }
 .memex-toc-item.level-3 { padding-left: 16px; opacity: 0.85; }
 .memex-toc-item.level-4 { padding-left: 24px; opacity: 0.7; font-size: 0.65rem; }
+
+/* ── Heatmap ───────────────────────────────────────────── */
+.memex-heat-item {
+  position: relative; margin: 4px 2px; padding: 8px 10px;
+  background: #0f172a; border-radius: 6px; cursor: pointer;
+  border-left: 3px solid #ef4444; overflow: hidden;
+}
+.memex-heat-item:hover { background: #1e293b; }
+.memex-heat-bar {
+  position: absolute; top: 0; left: 0; bottom: 0;
+  background: linear-gradient(90deg, rgba(239,68,68,0.15), rgba(239,68,68,0.03));
+  pointer-events: none;
+}
+.memex-heat-content { position: relative; }
+.memex-heat-header {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 0.78rem; margin-bottom: 2px;
+}
+.memex-heat-name { color: #e5e7eb; font-weight: 500; font-family: ui-monospace, monospace; }
+.memex-heat-calls { color: #fca5a5; font-size: 0.7rem; }
+.memex-heat-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 0.65rem; margin-bottom: 2px;
+}
+.memex-heat-endpoints { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 2px; }
+.memex-heat-badge {
+  background: #1e293b; color: #93c5fd; padding: 1px 5px;
+  border-radius: 3px; font-size: 0.62rem; font-family: ui-monospace, monospace;
+}
+.memex-heat-last { font-size: 0.6rem; }
+
+/* ── Health ────────────────────────────────────────────── */
+.memex-health-summary {
+  display: flex; gap: 8px; padding: 4px 4px 12px;
+  border-bottom: 1px solid #1f2937; margin-bottom: 8px;
+}
+.memex-health-stat {
+  flex: 1; padding: 8px; border-radius: 6px;
+  background: #0f172a; text-align: center;
+  border: 1px solid #1f2937;
+}
+.memex-health-stat .lab { display: block; font-size: 0.6rem; color: #6b7280; text-transform: uppercase; }
+.memex-health-stat .val { display: block; font-size: 1.4rem; font-weight: 600; color: #e5e7eb; margin-top: 2px; }
+.memex-health-stat.ok .val   { color: #10b981; }
+.memex-health-stat.warn .val { color: #f59e0b; }
+.memex-health-stat.bad .val  { color: #ef4444; }
+
+.memex-health-report {
+  margin: 6px 2px; padding: 8px 10px;
+  background: #0f172a; border-radius: 6px;
+  border-left: 3px solid #6b7280;
+}
+.memex-health-report.status-ok   { border-left-color: #10b981; }
+.memex-health-report.status-warn { border-left-color: #f59e0b; }
+.memex-health-report.status-bad  { border-left-color: #ef4444; }
+.memex-health-title {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 0.78rem; color: #e5e7eb; font-weight: 500; margin-bottom: 4px;
+}
+.memex-health-list { font-size: 0.7rem; color: #cbd5e1; margin-top: 4px; line-height: 1.5; }
+.memex-orphan {
+  background: #1e293b; padding: 1px 5px; border-radius: 3px;
+  font-family: ui-monospace, monospace; font-size: 0.65rem;
+  color: #fde68a; cursor: pointer;
+}
+.memex-orphan:hover { background: #374151; color: #fef3c7; }
+
+/* ── Type filter buttons ──────────────────────────────── */
+.memex-type-btn {
+  background: #1f2937; color: #9ca3af; padding: 3px 8px;
+  border-radius: 4px; font-size: 0.65rem; cursor: pointer;
+  border: 1px solid #374151;
+}
+.memex-type-btn:hover { background: #374151; color: #e5e7eb; }
+.memex-type-btn.active { background: #312e81; color: #c7d2fe; border-color: #4338ca; }
+
+.memex-type-badge {
+  display: inline-block; min-width: 14px; text-align: center;
+  margin-right: 4px; font-size: 0.7rem;
+}
+.memex-type-badge.type-user      { color: #93c5fd; }
+.memex-type-badge.type-feedback  { color: #fbbf24; }
+.memex-type-badge.type-project   { color: #86efac; }
+.memex-type-badge.type-reference { color: #d8b4fe; }

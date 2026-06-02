@@ -167,6 +167,29 @@
             <button onclick="sendNotify()" class="btn-primary mt-3 w-full">📲 Envoyer</button>
           </div>
 
+          <!-- Memory CC economy -->
+          <div class="card sm:col-span-2 cursor-pointer hover:bg-gray-800/40" onclick="switchTab('memory')">
+            <div class="card-title flex items-center justify-between">
+              <span>💰 Memory CC — économie tokens</span>
+              <span class="text-xs text-gray-500">cliquer pour ouvrir</span>
+            </div>
+            <div class="grid grid-cols-3 gap-3 mt-3">
+              <div class="metric-box">
+                <div id="d-memex-saved" class="metric-val text-green-400">—</div>
+                <div class="metric-label">tokens économisés</div>
+              </div>
+              <div class="metric-box">
+                <div id="d-memex-calls" class="metric-val">—</div>
+                <div class="metric-label">appels memex</div>
+              </div>
+              <div class="metric-box">
+                <div id="d-memex-ratio" class="metric-val text-violet-300">—</div>
+                <div class="metric-label">ratio économie</div>
+              </div>
+            </div>
+            <div id="d-memex-top" class="text-xs text-gray-400 mt-3"></div>
+          </div>
+
         </div>
       </div>
 
@@ -274,6 +297,8 @@
           <button class="memex-subtab" data-view="search" onclick="memexShowView('search')">🔍 Recherche</button>
           <button class="memex-subtab" data-view="recent" onclick="memexShowView('recent')">🕒 Récents</button>
           <button class="memex-subtab" data-view="graph" onclick="memexShowView('graph')">🕸 Graph</button>
+          <button class="memex-subtab" data-view="heatmap" onclick="memexShowView('heatmap')">🔥 Heatmap</button>
+          <button class="memex-subtab" data-view="health" onclick="memexShowView('health')">🩺 Santé</button>
           <button class="memex-subtab" data-view="roadmap" onclick="memexShowView('roadmap')">🗺 Roadmap</button>
         </div>
 
@@ -284,9 +309,16 @@
 
             <!-- TREE view -->
             <div id="memex-view-tree" class="memex-view flex flex-col flex-1 min-h-0">
-              <div class="p-3 border-b border-gray-800">
+              <div class="p-3 border-b border-gray-800 space-y-2">
                 <input id="memex-tree-filter" class="input text-sm" placeholder="Filtrer par nom de fichier ou root…"
                        oninput="memexRenderTree()">
+                <div class="flex flex-wrap gap-1 text-xs">
+                  <button class="memex-type-btn active" data-type="" onclick="memexFilterType(this,'')">Tous</button>
+                  <button class="memex-type-btn" data-type="user" onclick="memexFilterType(this,'user')">👤 user</button>
+                  <button class="memex-type-btn" data-type="feedback" onclick="memexFilterType(this,'feedback')">⚠ feedback</button>
+                  <button class="memex-type-btn" data-type="project" onclick="memexFilterType(this,'project')">📦 project</button>
+                  <button class="memex-type-btn" data-type="reference" onclick="memexFilterType(this,'reference')">🔗 reference</button>
+                </div>
               </div>
               <div id="memex-tree" class="flex-1 overflow-y-auto p-2 text-sm">Chargement…</div>
             </div>
@@ -316,9 +348,33 @@
             <div id="memex-view-roadmap" class="memex-view hidden flex-col flex-1 min-h-0">
               <div class="p-3 border-b border-gray-800 text-xs text-gray-400">
                 <div class="font-semibold text-gray-200 mb-1">Token-saving roadmap</div>
-                <div>4 endpoints pour économiser des tokens quand Claude consulte la mémoire.</div>
+                <div>Endpoints + tools MCP pour économiser des tokens quand Claude consulte la mémoire.</div>
               </div>
               <div id="memex-roadmap" class="flex-1 overflow-y-auto p-2 space-y-2 text-sm">Chargement…</div>
+            </div>
+
+            <!-- HEATMAP view -->
+            <div id="memex-view-heatmap" class="memex-view hidden flex-col flex-1 min-h-0">
+              <div class="p-3 border-b border-gray-800 text-xs text-gray-400 flex items-center justify-between">
+                <div>
+                  <div class="font-semibold text-gray-200 mb-1">🔥 Top consulted</div>
+                  <div>Fichiers les plus sollicités via skim/section/read.</div>
+                </div>
+                <button onclick="memexLoadHeatmap()" class="btn-ghost text-xs">↺</button>
+              </div>
+              <div id="memex-heatmap" class="flex-1 overflow-y-auto p-2 text-sm">Chargement…</div>
+            </div>
+
+            <!-- HEALTH view -->
+            <div id="memex-view-health" class="memex-view hidden flex-col flex-1 min-h-0">
+              <div class="p-3 border-b border-gray-800 text-xs text-gray-400 flex items-center justify-between">
+                <div>
+                  <div class="font-semibold text-gray-200 mb-1">🩺 Index health</div>
+                  <div>Audit MEMORY.md de tous les repos (liens cassés + orphelins).</div>
+                </div>
+                <button onclick="memexLoadHealth()" class="btn-ghost text-xs">↺</button>
+              </div>
+              <div id="memex-health" class="flex-1 overflow-y-auto p-2 text-sm">Chargement…</div>
             </div>
 
             <!-- GRAPH view -->
