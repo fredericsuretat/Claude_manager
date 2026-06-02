@@ -625,6 +625,7 @@ def _memex_load_stats() -> dict:
         "tokens_actual": 0,    # tokens effectivement renvoyés
         "tokens_saved": 0,     # estimation économie
         "since": datetime.now().isoformat(),
+        "files": {},           # "root::rel" -> {calls, tokens_saved, by_endpoint, last}
     }
 
 _memex_stats: dict = _memex_load_stats()
@@ -636,17 +637,23 @@ def _memex_save_stats():
     except Exception as e:
         sync_logger(f"[MEMEX] save stats failed: {e}")
 
-def _memex_track(endpoint: str, full_tokens: int = 0, actual_tokens: int = 0):
+def _memex_track(endpoint: str, full_tokens: int = 0, actual_tokens: int = 0, file_key: str | None = None):
     with _memex_stats_lock:
         _memex_stats["calls"][endpoint] = _memex_stats["calls"].get(endpoint, 0) + 1
         _memex_stats["tokens_full"] += full_tokens
         _memex_stats["tokens_actual"] += actual_tokens
         saved = max(0, full_tokens - actual_tokens)
         _memex_stats["tokens_saved"] += saved
-        # save async-ish (rate-limit: only every 10 calls)
-        total_calls = sum(_memex_stats["calls"].values())
-        if total_calls % 10 == 0:
-            _memex_save_stats()
+        # per-file heatmap
+        if file_key:
+            files = _memex_stats.setdefault("files", {})
+            entry = files.setdefault(file_key, {"calls": 0, "tokens_saved": 0, "by_endpoint": {}, "last": None})
+            entry["calls"] += 1
+            entry["tokens_saved"] += saved
+            entry["by_endpoint"][endpoint] = entry["by_endpoint"].get(endpoint, 0) + 1
+            entry["last"] = datetime.now().isoformat()
+        # Persist every call — stats JSON is tiny, restarts shouldn't lose data.
+        _memex_save_stats()
 
 
 @app.get("/api/memory-explorer/tree")
@@ -662,7 +669,11 @@ def memex_stats():
 @app.get("/api/memory-explorer/file")
 def memex_get(root: str, rel: str):
     try:
-        return _memex_svc.read(root, rel)
+        r = _memex_svc.read(root, rel)
+        # track full reads (no token savings, but useful for heatmap to spot files
+        # that should be skimmed/sectioned instead)
+        _memex_track("read", 0, 0, file_key=f"{root}::{rel}")
+        return r
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
@@ -732,7 +743,7 @@ def memex_skim(root: str, rel: str, body_lines: int = 8):
     try:
         r = _memex_svc.skim(root, rel, body_lines=body_lines)
         if "approx_tokens_full" in r:
-            _memex_track("skim", r["approx_tokens_full"], r["approx_tokens_skim"])
+            _memex_track("skim", r["approx_tokens_full"], r["approx_tokens_skim"], file_key=f"{root}::{rel}")
         return r
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
@@ -768,7 +779,7 @@ def memex_section(root: str, rel: str, heading: str):
     try:
         r = _memex_svc.read_section(root, rel, heading)
         if "approx_tokens" in r and "approx_tokens_full_file" in r:
-            _memex_track("section", r["approx_tokens_full_file"], r["approx_tokens"])
+            _memex_track("section", r["approx_tokens_full_file"], r["approx_tokens"], file_key=f"{root}::{rel}")
         return r
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
@@ -789,9 +800,105 @@ def memex_stats_reset():
         _memex_stats["tokens_full"] = 0
         _memex_stats["tokens_actual"] = 0
         _memex_stats["tokens_saved"] = 0
+        _memex_stats["files"] = {}
         _memex_stats["since"] = datetime.now().isoformat()
         _memex_save_stats()
     return {"ok": True}
+
+
+@app.post("/api/memory-explorer/create-memory")
+def memex_create_memory(body: dict):
+    """Crée un .md typé (user/feedback/project/reference) avec frontmatter
+    + met à jour le MEMORY.md du root. Body : {root, slug, name, description, type, body, index_name?}"""
+    try:
+        r = _memex_svc.create_memory(
+            root_id=body.get("root", ""),
+            slug=body.get("slug", ""),
+            name=body.get("name", ""),
+            description=body.get("description", ""),
+            mtype=body.get("type", "project"),
+            body=body.get("body", ""),
+            index_name=body.get("index_name", "MEMORY.md"),
+        )
+        if r.get("ok"):
+            sync_logger(f"[MEMEX] create_memory {r.get('root')}/{r.get('rel')} type={r.get('type')}")
+        return r
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.get("/api/memory-explorer/heatmap")
+def memex_heatmap(limit: int = 30):
+    """Top consulted .md files. Useful to identify candidates for better indexing."""
+    with _memex_stats_lock:
+        files = dict(_memex_stats.get("files", {}))
+    items = []
+    for key, entry in files.items():
+        root, _, rel = key.partition("::")
+        items.append({
+            "root": root,
+            "rel": rel,
+            "calls": entry.get("calls", 0),
+            "tokens_saved": entry.get("tokens_saved", 0),
+            "by_endpoint": entry.get("by_endpoint", {}),
+            "last": entry.get("last"),
+        })
+    items.sort(key=lambda x: (x["calls"], x["tokens_saved"]), reverse=True)
+    return {"items": items[:limit], "total_tracked_files": len(items)}
+
+
+@app.get("/api/memory-explorer/index-health")
+def memex_index_health(include_claude_md: bool = False):
+    """Aggregate parse_index() across all roots.
+
+    By default only MEMORY.md is audited — CLAUDE.md is instruction text, not
+    a link-format index, so auditing it would flag every .md as orphan.
+    Pass ?include_claude_md=true to include them anyway (useful only if you
+    use CLAUDE.md as an index).
+    """
+    tree = _memex_svc.tree(include_empty=True)
+    reports = []
+    total_missing = 0
+    total_orphans = 0
+    names = ["MEMORY.md"]
+    if include_claude_md:
+        names.append("CLAUDE.md")
+    for root in tree.get("roots", []):
+        root_id = root.get("id")
+        for index_name in names:
+            try:
+                parsed = _memex_svc.parse_index(root_id, index_name)
+            except Exception:
+                continue
+            if not parsed or parsed.get("error"):
+                continue
+            entries = parsed.get("entries", []) or []
+            # Skip "indexes" with 0 entries — these are likely not really
+            # index files but accidentally named files.
+            if not entries:
+                continue
+            missing = parsed.get("missing", []) or []
+            orphans = parsed.get("orphans", []) or []
+            reports.append({
+                "root": root_id,
+                "root_label": root.get("label"),
+                "index": index_name,
+                "entries": len(entries),
+                "missing": missing,
+                "orphans": orphans,
+                "missing_count": len(missing),
+                "orphans_count": len(orphans),
+            })
+            total_missing += len(missing)
+            total_orphans += len(orphans)
+    return {
+        "reports": reports,
+        "totals": {
+            "indexes": len(reports),
+            "missing": total_missing,
+            "orphans": total_orphans,
+        },
+    }
 
 
 # ── Roadmap metadata (consommé par l'UI) ─────────────────────────
@@ -840,6 +947,42 @@ MEMEX_ROADMAP = [
         "why": "Localiser un sujet via les titres ## sans lire les contenus.",
         "returns": "[{root, rel, name, heading, level}]",
         "savings": "Réponse à 'où est documenté X ?' en ~50 tokens",
+    },
+    {
+        "id": "heatmap",
+        "title": "6. Heatmap usage",
+        "status": "done",
+        "endpoint": "GET /api/memory-explorer/heatmap",
+        "why": "Identifier les .md les plus sollicités → candidats pour meilleur découpage / index plus riche.",
+        "returns": "[{root, rel, calls, tokens_saved, by_endpoint, last}]",
+        "savings": "Méta-outil : améliore le ROI des autres endpoints",
+    },
+    {
+        "id": "index-health",
+        "title": "7. Index health audit",
+        "status": "done",
+        "endpoint": "GET /api/memory-explorer/index-health",
+        "why": "Détecter MEMORY.md cassés (liens morts) ou .md orphelins (non indexés) à travers tous les repos.",
+        "returns": "{reports[], totals: {indexes, missing, orphans}}",
+        "savings": "Maintenance proactive de la qualité du graphe mémoire",
+    },
+    {
+        "id": "mcp-wrapper",
+        "title": "8. MCP wrapper",
+        "status": "done",
+        "endpoint": "stdio MCP server: memory-cc",
+        "why": "Claude Code peut appeler skim/section/index/search-meta nativement, sans curl.",
+        "returns": "10 tools : memex_skim, memex_section, memex_search_meta, memex_search_headings, memex_index, memex_heatmap, memex_index_health, memex_tree, memex_recent, memex_create_memory",
+        "savings": "Suppression du tax curl + JSON parsing manuel à chaque appel",
+    },
+    {
+        "id": "create-memory",
+        "title": "9. Create memory (atomic)",
+        "status": "done",
+        "endpoint": "POST /api/memory-explorer/create-memory",
+        "why": "Créer un .md typé + maj du MEMORY.md en UN seul appel — garantit structure frontmatter + index cohérent.",
+        "returns": "{ok, rel, root, type, index_updated, index_path, size}",
+        "savings": "Réduit la friction de sauvegarde → plus de mémoires capturées → meilleur contexte futur",
     },
 ]
 

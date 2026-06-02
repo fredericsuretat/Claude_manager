@@ -168,6 +168,28 @@ def discover_roots() -> list[MemRoot]:
     return roots
 
 
+def _peek_frontmatter_type(path: Path) -> str | None:
+    """Cheap frontmatter parse: lit ~1 KiB et extrait `type:` si présent.
+    Renvoie None si pas de frontmatter ou pas de champ type."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(1024).decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    if not head.startswith("---"):
+        return None
+    m = _FM_RE.match(head)
+    if not m:
+        return None
+    block = m.group(1)
+    for line in block.splitlines():
+        line = line.strip()
+        if line.startswith("type:"):
+            val = line.split(":", 1)[1].strip().strip('"').strip("'")
+            return val.lower() or None
+    return None
+
+
 def _iter_md(root: MemRoot) -> Iterable[Path]:
     """Itère les .md d'un root, en respectant recursive/IGNORE_DIRS."""
     if not root.recursive:
@@ -249,6 +271,7 @@ class MemoryExplorerService:
                     "size": st.st_size,
                     "mtime": st.st_mtime,
                     "is_index": f.name in ("MEMORY.md", "CLAUDE.md", "README.md"),
+                    "type": _peek_frontmatter_type(f),
                 })
             if not files and not include_empty:
                 continue
@@ -297,6 +320,60 @@ class MemoryExplorerService:
             self.invalidate_cache()
             return {"ok": True, "deleted": rel_path}
         return {"ok": False, "error": "Not found"}
+
+    def create_memory(self, root_id: str, slug: str, name: str, description: str,
+                       mtype: str, body: str, index_name: str = "MEMORY.md") -> dict:
+        """Crée un fichier de mémoire avec frontmatter typé ET ajoute son entrée
+        dans le MEMORY.md du root. Atomique côté usage (les 2 écritures sont
+        séquentielles mais retournent ok/error global)."""
+        mtype = (mtype or "project").lower()
+        if mtype not in {"user", "feedback", "project", "reference"}:
+            return {"ok": False, "error": f"Invalid type '{mtype}' (user/feedback/project/reference)"}
+        # Slug → rel path
+        slug = slug.strip().replace(" ", "_")
+        if not slug.endswith(".md"):
+            slug = f"{slug}.md"
+        try:
+            _, path = self._resolve(root_id, slug)
+            _, index_path = self._resolve(root_id, index_name)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        if path.exists():
+            return {"ok": False, "error": f"File already exists: {slug}"}
+        # Build frontmatter + body
+        content = (
+            "---\n"
+            f"name: {name}\n"
+            f"description: {description}\n"
+            f"type: {mtype}\n"
+            "---\n\n"
+            f"{body}\n"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        # Append index entry (idempotent: skip if already present)
+        index_line = f"- [{slug}]({slug}) — {description}"
+        index_added = False
+        if index_path.exists():
+            existing = index_path.read_text(encoding="utf-8", errors="replace")
+            if slug not in existing:
+                if not existing.endswith("\n"):
+                    existing += "\n"
+                index_path.write_text(existing + index_line + "\n", encoding="utf-8")
+                index_added = True
+        else:
+            index_path.write_text(f"# Memory Index\n\n{index_line}\n", encoding="utf-8")
+            index_added = True
+        self.invalidate_cache()
+        return {
+            "ok": True,
+            "rel": slug,
+            "root": root_id,
+            "type": mtype,
+            "index_updated": index_added,
+            "index_path": str(index_path),
+            "size": len(content),
+        }
 
     def create(self, root_id: str, rel_path: str, content: str = "") -> dict:
         _, path = self._resolve(root_id, rel_path)
