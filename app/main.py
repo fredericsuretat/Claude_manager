@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -28,6 +29,13 @@ from app.services.terminal_service import TerminalService
 ensure_dirs()
 
 app = FastAPI(title="Claude Control Web", version="1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://cc.suretat.com"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 # ── Log queue (threads → async event loop) ──────────────────────
 log_queue: queue.Queue = queue.Queue()
