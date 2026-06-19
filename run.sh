@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
-# Lance Claude Control Web localement
+# Lance Claude Control Web localement (mode dev / hors Docker)
+# En production, préférer : docker compose up -d
 set -e
 cd "$(dirname "$0")"
+
+# Bloquer si le container Docker tourne déjà sur le port 8765
+if docker ps --filter "name=claude-control-web" --filter "status=running" --format '{{.Names}}' 2>/dev/null | grep -q claude-control-web; then
+  echo "⚠️  Le container Docker 'claude-control-web' tourne déjà sur le port 8765."
+  echo "   Utilise 'docker compose logs -f' pour voir les logs."
+  echo "   Pour forcer le mode natif : docker stop claude-control-web && ./run.sh"
+  exit 1
+fi
 
 unset ANTHROPIC_API_KEY
 
